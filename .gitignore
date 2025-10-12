@@ -1,0 +1,13 @@
+.DS_Store
+.env
+/node_modules/
+
+# React Router
+/.react-router/
+/build/
+
+# SQLite database files
+football-ticketing-app.sqlite
+football-ticketing-app.db-journal
+football-ticketing-app.sqlite-shm
+football-ticketing-app.sqlite-wal
