@@ -1,9 +1,9 @@
-import type { Route } from './+types/home'
+import { redirect } from 'react-router'
+
+export async function loader() {
+  return redirect('/login')
+}
 
 export default function Home() {
-  return (
-    <div className="text-center p-4">
-      <h1 className="text-2xl">Login</h1>
-    </div>
-  )
+  return null
 }
