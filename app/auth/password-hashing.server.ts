@@ -1,5 +1,3 @@
-// Helper functions for hashing and verifying passwords using argon2 with PEPPER
-
 import argon2 from 'argon2'
 
 const PEPPER = process.env.AUTH_PEPPER // Ensure to set a strong pepper in production

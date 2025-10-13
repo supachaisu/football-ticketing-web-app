@@ -1,7 +1,7 @@
 import { Either, Schema } from 'effect'
 import { Form, Link, redirect } from 'react-router'
-import { hashPassword } from '~/auth/password-hashing'
-import { Email, type Customer } from '~/auth/schemas'
+import { hashPassword } from '~/auth/password-hashing.server'
+import { Email, type Customer } from '~/auth/schemas.server'
 import { db } from '~/db.server'
 
 export async function action({ request }: { request: Request }) {
@@ -44,7 +44,7 @@ export async function action({ request }: { request: Request }) {
   // Create new customer
   //
 
-  const insert = db.prepare<[string, Email, string], { id: number }>(
+  const insert = db.prepare<[string, Email, string]>(
     'INSERT INTO customers (name, email, phone) VALUES (?, ?, ?)'
   )
   const result = insert.run(_name, email, _phone)

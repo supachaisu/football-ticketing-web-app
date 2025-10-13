@@ -7,7 +7,7 @@ export const Email = Schema.String.pipe(
 export type Email = typeof Email.Type
 
 export class Customer extends Schema.Class<Customer>('Customer')({
-  id: Schema.Int,
+  customer_id: Schema.Int,
   name: Schema.NonEmptyTrimmedString,
   email: Email,
   phone: Schema.NonEmptyTrimmedString,
