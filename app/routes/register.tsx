@@ -3,6 +3,9 @@ import { Form, Link, redirect } from 'react-router'
 import { hashPassword } from '~/auth/password-hashing.server'
 import { Email, type Customer } from '~/auth/schemas.server'
 import { db } from '~/db.server'
+import { Toaster, toast } from 'sonner'
+import type { Route } from './+types/register'
+import { useEffect } from 'react'
 
 export async function action({ request }: { request: Request }) {
   //
@@ -20,6 +23,12 @@ export async function action({ request }: { request: Request }) {
       success: false,
       message: 'All fields are required',
     } as const
+  }
+
+  // Validate phone number
+  const phoneRegex = /^\+?[1-9]\d{1,14}$/
+  if (!phoneRegex.test(_phone)) {
+    return { success: false, message: 'Invalid phone number' } as const
   }
 
   // Validate email format
@@ -61,7 +70,18 @@ export async function action({ request }: { request: Request }) {
   return redirect('/login')
 }
 
-export default function Register() {
+export default function Register({ actionData }: Route.ComponentProps) {
+  const maybeErrMsg = actionData?.success === false ? actionData.message : null
+
+  useEffect(() => {
+    if (maybeErrMsg) {
+      toast.error(maybeErrMsg, {
+        duration: 4000,
+        position: 'top-center',
+      })
+    }
+  }, [actionData])
+
   return (
     <div>
       <title>Register | Football Ticketing Web App</title>
@@ -74,6 +94,7 @@ export default function Register() {
         content="Create an account to manage your football tickets"
       />
       <main className="min-h-screen relative flex items-center justify-center p-6">
+        <Toaster />
         {/* Background gradient with subtle blobs */}
         <div className="pointer-events-none absolute inset-0 -z-10">
           <div className="absolute inset-0 bg-[radial-gradient(1200px_600px_at_-10%_-10%,rgba(255,255,255,0.55),transparent_60%),radial-gradient(900px_500px_at_110%_10%,rgba(0,0,0,0.05),transparent_60%),linear-gradient(180deg,rgb(248_250_252),rgb(238_242_247))] dark:bg-[radial-gradient(1200px_600px_at_-10%_-10%,rgba(255,255,255,0.06),transparent_60%),radial-gradient(900px_500px_at_110%_10%,rgba(255,255,255,0.04),transparent_60%),linear-gradient(180deg,rgb(2_6_23),rgb(2_6_23))]" />
