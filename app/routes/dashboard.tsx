@@ -2,6 +2,8 @@ import { cookieSessionStorage } from '~/auth/sessions.server'
 import { Form, redirect, Link, data } from 'react-router'
 import type { Route } from './+types/dashboard'
 import { findCustomerById } from '~/repositories/customer.repository'
+import { db } from '~/db.server'
+import { useState } from 'react'
 
 // ---- Types that mirror the attached spec (Customer/Match/Booking/Payment) ----
 // Minimal client-facing types for this route
@@ -24,40 +26,16 @@ export type UIBooking = {
   status: 'Pending' | 'Paid' | 'Cancel'
 }
 
-// ---- Helper to seed demo matches in the Session (so page works without DB) ----
-function seedMatches(): UIMatch[] {
-  const now = new Date()
-  const inDays = (d: number) => new Date(now.getTime() + d * 86400000)
-  const iso = (d: Date) => d.toISOString()
-  return [
-    {
-      match_id: 101,
-      home_team: 'Bangkok United',
-      away_team: 'Chiang Mai FC',
-      match_date: iso(inDays(7)),
-      stadium: 'Thammasat Stadium',
-      tickets_total: 30000,
-      tickets_sold: 12345,
-    },
-    {
-      match_id: 102,
-      home_team: 'Muangthong Utd',
-      away_team: 'Buriram Utd',
-      match_date: iso(inDays(14)),
-      stadium: 'SCG Stadium',
-      tickets_total: 20000,
-      tickets_sold: 15200,
-    },
-    {
-      match_id: 103,
-      home_team: 'Port FC',
-      away_team: 'BG Pathum',
-      match_date: iso(inDays(21)),
-      stadium: 'PAT Stadium',
-      tickets_total: 12000,
-      tickets_sold: 9800,
-    },
-  ]
+// ---- Map DB booking status to UI status ----
+function dbStatusToUI(status: string): UIBooking['status'] {
+  switch (status) {
+    case 'CONFIRMED':
+      return 'Paid'
+    case 'CANCELLED':
+      return 'Cancel'
+    default:
+      return 'Pending'
+  }
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -83,28 +61,61 @@ export async function loader({ request }: Route.LoaderArgs) {
     })
   }
 
-  // Seed matches into the session the first time so the page is usable
-  let matches = session.get('matches') as UIMatch[] | undefined
-  if (!matches || !Array.isArray(matches) || matches.length === 0) {
-    matches = seedMatches()
-    session.set('matches', matches)
-  }
+  // Load matches from DB with a simple, readable tickets_sold calculation.
+  // We avoid JOIN + GROUP BY and instead use a correlated subquery:
+  // tickets_sold = sum of quantities for bookings with status PENDING/CONFIRMED
+  const matches = db
+    .prepare(
+      `SELECT
+          m.match_id,
+          m.home_team,
+          m.away_team,
+          m.match_date,
+          m.stadium,
+          m.tickets_total,
+          (
+            SELECT COALESCE(SUM(b.quantity), 0)
+            FROM bookings b
+            WHERE b.match_id = m.match_id
+              AND b.status IN ('PENDING', 'CONFIRMED')
+          ) AS tickets_sold
+        FROM matches m
+        ORDER BY m.match_date ASC`
+    )
+    .all() as UIMatch[]
 
-  const bookings = (session.get('bookings') as UIBooking[] | undefined) ?? []
+  // Load current user's bookings from DB
+  const dbBookings = db
+    .prepare(
+      `SELECT booking_id, customer_id, match_id, quantity, booking_date, status 
+         FROM bookings 
+        WHERE customer_id = ?
+        ORDER BY booking_date DESC`
+    )
+    .all(Number(customerId)) as Array<{
+    booking_id: number
+    customer_id: number
+    match_id: number
+    quantity: number
+    booking_date: string
+    status: string
+  }>
 
-  return data(
-    {
-      customerId,
-      customerName: customer.name,
-      matches,
-      bookings,
-    } as const,
-    {
-      headers: {
-        'Set-Cookie': await cookieSessionStorage.commitSession(session),
-      },
-    }
-  )
+  const bookings: UIBooking[] = dbBookings.map((b) => ({
+    booking_id: b.booking_id,
+    customer_id: String(b.customer_id),
+    match_id: b.match_id,
+    quantity: b.quantity,
+    booking_date: b.booking_date,
+    status: dbStatusToUI(b.status),
+  }))
+
+  return data({
+    customerId,
+    customerName: customer.name,
+    matches,
+    bookings,
+  } as const)
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -146,11 +157,22 @@ export async function action({ request }: Route.ActionArgs) {
       )
     }
 
-    const matches = (session.get('matches') as UIMatch[] | undefined) ?? []
-    const match = matches.find((m) => m.match_id === matchId)
-    if (!match) return data({ formError: 'Match not found.' }, { status: 404 })
+    // Ensure match exists and compute remaining from DB
+    const matchRow = db
+      .prepare(`SELECT match_id, tickets_total FROM matches WHERE match_id = ?`)
+      .get(matchId) as { match_id: number; tickets_total: number } | undefined
+    if (!matchRow)
+      return data({ formError: 'Match not found.' }, { status: 404 })
 
-    const remaining = match.tickets_total - match.tickets_sold
+    const soldRow = db
+      .prepare(
+        `SELECT COALESCE(SUM(quantity), 0) as sold
+           FROM bookings
+          WHERE match_id = ? AND status IN ('PENDING', 'CONFIRMED')`
+      )
+      .get(matchId) as { sold: number }
+
+    const remaining = matchRow.tickets_total - (soldRow?.sold ?? 0)
     if (quantity > remaining) {
       return data(
         { formError: `Only ${remaining} tickets remaining for this match.` },
@@ -158,26 +180,10 @@ export async function action({ request }: Route.ActionArgs) {
       )
     }
 
-    // Create a Pending booking (per spec: Booking + Status)
-    const booking: UIBooking = {
-      booking_id: Date.now(),
-      customer_id: customerId,
-      match_id: match.match_id,
-      quantity,
-      booking_date: new Date().toISOString(),
-      status: 'Pending',
-    }
-
-    const bookings = (session.get('bookings') as UIBooking[] | undefined) ?? []
-    bookings.push(booking)
-    session.set('bookings', bookings)
-
-    // Reserve the tickets optimistically by increasing sold count
-    match.tickets_sold += quantity
-    session.set(
-      'matches',
-      matches.map((m) => (m.match_id === match.match_id ? match : m))
-    )
+    // Insert booking as PENDING in DB
+    db.prepare(
+      `INSERT INTO bookings (customer_id, match_id, quantity, status) VALUES (?, ?, ?, 'PENDING')`
+    ).run(Number(customerId), matchId, quantity)
 
     return redirect('/dashboard', {
       headers: {
@@ -188,25 +194,53 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (intent === 'cancel-booking') {
     const id = Number(formData.get('booking_id'))
-    const bookings = (session.get('bookings') as UIBooking[] | undefined) ?? []
-    const booking = bookings.find((b) => b.booking_id === id)
-    if (!booking)
-      return data({ formError: 'Booking not found.' }, { status: 404 })
-
-    // Roll back reserved tickets
-    const matches = (session.get('matches') as UIMatch[] | undefined) ?? []
-    const match = matches.find((m) => m.match_id === booking.match_id)
-    if (match) {
-      match.tickets_sold = Math.max(0, match.tickets_sold - booking.quantity)
-      session.set(
-        'matches',
-        matches.map((m) => (m.match_id === match.match_id ? match : m))
+    const res = db
+      .prepare(
+        `UPDATE bookings SET status = 'CANCELLED' WHERE booking_id = ? AND customer_id = ?`
       )
+      .run(id, Number(customerId))
+    if (!res.changes) {
+      return data({ formError: 'Booking not found.' }, { status: 404 })
     }
 
-    // Mark booking as Cancel
-    booking.status = 'Cancel'
-    session.set('bookings', bookings)
+    return redirect('/dashboard', {
+      headers: {
+        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+      },
+    })
+  }
+
+  if (intent === 'confirm-booking') {
+    const id = Number(formData.get('booking_id'))
+    const res = db
+      .prepare(
+        `UPDATE bookings SET status = 'CONFIRMED' WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
+      )
+      .run(id, Number(customerId))
+    if (!res.changes) {
+      return data({ formError: 'Booking not found or already processed.' }, { status: 404 })
+    }
+
+    return redirect('/dashboard', {
+      headers: {
+        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+      },
+    })
+  }
+
+  if (intent === 'delete-booking') {
+    const id = Number(formData.get('booking_id'))
+    const res = db
+      .prepare(
+        `DELETE FROM bookings WHERE booking_id = ? AND customer_id = ? AND status != 'CONFIRMED'`
+      )
+      .run(id, Number(customerId))
+    if (!res.changes) {
+      return data(
+        { formError: 'Booking not found or cannot be deleted (already paid).' },
+        { status: 404 }
+      )
+    }
 
     return redirect('/dashboard', {
       headers: {
@@ -223,6 +257,7 @@ export default function Dashboard({
   actionData,
 }: Route.ComponentProps) {
   const { customerName, customerId, matches, bookings } = loaderData
+  const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null)
 
   return (
     <div className="min-h-screen">
@@ -409,6 +444,7 @@ export default function Dashboard({
                   const m = matches.find((mm) => mm.match_id === b.match_id)
                   const when = m ? new Date(m.match_date).toLocaleString() : '—'
                   const isPending = b.status === 'Pending'
+                  const isCancelled = b.status === 'Cancel'
                   return (
                     <div
                       key={b.booking_id}
@@ -452,24 +488,45 @@ export default function Dashboard({
                         )}
                       </div>
                       {isPending ? (
-                        <Form method="post" replace>
-                          <input
-                            type="hidden"
-                            name="_action"
-                            value="cancel-booking"
-                          />
-                          <input
-                            type="hidden"
-                            name="booking_id"
-                            value={b.booking_id}
-                          />
+                        <div className="flex items-center gap-2">
+                          <Form method="post" replace>
+                            <input type="hidden" name="_action" value="confirm-booking" />
+                            <input type="hidden" name="booking_id" value={b.booking_id} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white dark:bg-white/90 dark:text-slate-900 px-3 py-2 text-sm font-medium shadow hover:bg-slate-800 dark:hover:bg-white"
+                            >
+                              Make purchase
+                            </button>
+                          </Form>
+                          <Form method="post" replace>
+                            <input type="hidden" name="_action" value="cancel-booking" />
+                            <input type="hidden" name="booking_id" value={b.booking_id} />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+                            >
+                              Cancel booking
+                            </button>
+                          </Form>
                           <button
-                            type="submit"
-                            className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+                            type="button"
+                            onClick={() => setDeleteBookingId(b.booking_id)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-red-200 dark:border-red-500/40 bg-white text-red-700 dark:bg-white/10 dark:text-red-300 px-3 py-2 text-sm font-medium hover:bg-red-50 dark:hover:bg-white/15"
                           >
-                            Cancel booking
+                            Delete
                           </button>
-                        </Form>
+                        </div>
+                      ) : isCancelled ? (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteBookingId(b.booking_id)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-red-200 dark:border-red-500/40 bg-white text-red-700 dark:bg-white/10 dark:text-red-300 px-3 py-2 text-sm font-medium hover:bg-red-50 dark:hover:bg-white/15"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       ) : null}
                     </div>
                   )
@@ -478,6 +535,54 @@ export default function Dashboard({
           )}
         </section>
       </main>
+
+      {deleteBookingId !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-title"
+        >
+          {/* Backdrop */}
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setDeleteBookingId(null)}
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          />
+
+          {/* Panel */}
+          <div className="relative w-full max-w-md rounded-2xl border border-slate-900/10 dark:border-white/10 bg-white dark:bg-slate-900 p-6 shadow-xl">
+            <h3 id="delete-title" className="text-lg font-medium">
+              Delete booking?
+            </h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-white/70">
+              This action cannot be undone. The booking will be permanently removed.
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteBookingId(null)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+              >
+                Cancel
+              </button>
+              <Form method="post" replace onSubmit={() => setDeleteBookingId(null)}>
+                <input type="hidden" name="_action" value="delete-booking" />
+                <input type="hidden" name="booking_id" value={deleteBookingId ?? ''} />
+                <button
+                  type="submit"
+                  autoFocus
+                  className="inline-flex items-center gap-2 rounded-xl bg-red-600 text-white px-4 py-2 text-sm font-medium shadow hover:bg-red-700"
+                >
+                  Delete
+                </button>
+              </Form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+

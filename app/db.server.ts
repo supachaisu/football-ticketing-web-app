@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS matches (
   away_team TEXT NOT NULL,
   match_date TEXT NOT NULL,
   stadium TEXT NOT NULL,
+  tickets_total INTEGER NOT NULL CHECK (tickets_total > 0),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 `)
@@ -74,7 +75,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   booking_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (customer_id) REFERENCES customer(customer_id) ON DELETE CASCADE,
+  FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE,
   FOREIGN KEY (match_id) REFERENCES matches(match_id) ON DELETE CASCADE
 )
 `)
@@ -99,6 +100,21 @@ CREATE TABLE IF NOT EXISTS tickets (
   FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE
 )
 `)
+
+// Ensure tickets_total column exists (SQLite doesn't support IF NOT EXISTS for ADD COLUMN)
+try {
+  const cols = db.prepare(`PRAGMA table_info('matches')`).all() as Array<{
+    name: string
+  }>
+  const hasTicketsTotal = cols.some((c) => c.name === 'tickets_total')
+  if (!hasTicketsTotal) {
+    db.exec(
+      `ALTER TABLE matches ADD COLUMN tickets_total INTEGER NOT NULL DEFAULT 20000`
+    )
+  }
+} catch {
+  // best-effort; if this fails, subsequent queries will still work with a default in code
+}
 db.exec(`CREATE INDEX IF NOT EXISTS idx_ticket_booking ON tickets(booking_id)`)
 
 // Create payments table
@@ -129,6 +145,37 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_status ON payments(status)`)
 //
 
 // Seed some matches if none exist
-const matchCount = db
-  .prepare<[], number>('SELECT COUNT(*) as count FROM matches')
-  .get()
+const matchCountRow = db
+  .prepare('SELECT COUNT(*) as count FROM matches')
+  .get() as { count: number }
+
+if ((matchCountRow?.count ?? 0) === 0) {
+  const now = Date.now()
+  const isoPlusDays = (days: number) =>
+    new Date(now + days * 86400000).toISOString()
+
+  const sampleMatches: Array<[string, string, string, string, number]> = [
+    [
+      'Bangkok United',
+      'Chiang Mai FC',
+      isoPlusDays(7),
+      'Thammasat Stadium',
+      30000,
+    ],
+    ['Muangthong Utd', 'Buriram Utd', isoPlusDays(14), 'SCG Stadium', 20000],
+    ['Port FC', 'BG Pathum', isoPlusDays(21), 'PAT Stadium', 12000],
+  ]
+
+  const insertMatch = db.prepare(
+    'INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total) VALUES (?, ?, ?, ?, ?)'
+  )
+  const insertAll = db.transaction(
+    (rows: Array<[string, string, string, string, number]>) => {
+      for (const row of rows) insertMatch.run(...row)
+    }
+  )
+  insertAll(sampleMatches)
+
+  // Optional: you can log seeding once during startup
+  console.log(`[db] Seeded ${sampleMatches.length} matches`)
+}
