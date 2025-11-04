@@ -218,6 +218,8 @@ export async function action({ request }: Route.ActionArgs) {
   if (intent === 'confirm-booking') {
     const id = Number(formData.get('booking_id'))
     const customerIdNum = Number(customerId)
+    const methodRaw = String(formData.get('payment_method') ?? 'CARD')
+    const method = methodRaw === 'THAI_QR' ? 'THAI_QR' : 'CARD'
 
     try {
       const confirmAndCreatePayment = db.transaction(() => {
@@ -244,8 +246,8 @@ export async function action({ request }: Route.ActionArgs) {
         const amountCents = qty * PRICE_PER_TICKET_CENTS
 
         db.prepare(
-          `INSERT INTO payments (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', 'CARD', 'COMPLETED')`
-        ).run(id, amountCents)
+          `INSERT INTO payments (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', ?, 'COMPLETED')`
+        ).run(id, amountCents, method)
       })
 
       confirmAndCreatePayment()
@@ -294,6 +296,7 @@ export default function Dashboard({
 }: Route.ComponentProps) {
   const { customerName, customerId, matches, bookings, isAdmin } = loaderData
   const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null)
+  const [payBookingId, setPayBookingId] = useState<number | null>(null)
 
   return (
     <div className="min-h-screen pb-16">
@@ -533,16 +536,13 @@ export default function Dashboard({
                       </div>
                       {isPending ? (
                         <div className="flex items-center gap-2">
-                          <Form method="post" replace>
-                            <input type="hidden" name="_action" value="confirm-booking" />
-                            <input type="hidden" name="booking_id" value={b.booking_id} />
-                            <button
-                              type="submit"
-                              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white dark:bg-white/90 dark:text-slate-900 px-3 py-2 text-sm font-medium shadow hover:bg-slate-800 dark:hover:bg-white"
-                            >
-                              Make purchase
-                            </button>
-                          </Form>
+                          <button
+                            type="button"
+                            onClick={() => setPayBookingId(b.booking_id)}
+                            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white dark:bg-white/90 dark:text-slate-900 px-3 py-2 text-sm font-medium shadow hover:bg-slate-800 dark:hover:bg-white"
+                          >
+                            Make purchase
+                          </button>
                           <Form method="post" replace>
                             <input type="hidden" name="_action" value="cancel-booking" />
                             <input type="hidden" name="booking_id" value={b.booking_id} />
@@ -579,6 +579,69 @@ export default function Dashboard({
           )}
         </section>
       </main>
+
+      {payBookingId !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pay-title"
+        >
+          {/* Backdrop */}
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setPayBookingId(null)}
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          />
+
+          {/* Panel */}
+          <div className="relative w-full max-w-md rounded-2xl border border-slate-900/10 dark:border-white/10 bg-white dark:bg-slate-900 p-6 shadow-xl">
+            <h3 id="pay-title" className="text-lg font-medium">
+              Choose payment method
+            </h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-white/70">
+              Select how you’d like to pay for this booking.
+            </p>
+
+            <div className="mt-6 grid gap-3">
+              <Form method="post" replace onSubmit={() => setPayBookingId(null)}>
+                <input type="hidden" name="_action" value="confirm-booking" />
+                <input type="hidden" name="booking_id" value={payBookingId ?? ''} />
+                <input type="hidden" name="payment_method" value="CARD" />
+                <button
+                  type="submit"
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 text-white dark:bg-white/90 dark:text-slate-900 px-4 py-2.5 text-sm font-medium shadow hover:bg-slate-800 dark:hover:bg-white"
+                >
+                  Pay with card
+                </button>
+              </Form>
+
+              <Form method="post" replace onSubmit={() => setPayBookingId(null)}>
+                <input type="hidden" name="_action" value="confirm-booking" />
+                <input type="hidden" name="booking_id" value={payBookingId ?? ''} />
+                <input type="hidden" name="payment_method" value="THAI_QR" />
+                <button
+                  type="submit"
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-4 py-2.5 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+                >
+                  Thai QR Payment
+                </button>
+              </Form>
+            </div>
+
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => setPayBookingId(null)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteBookingId !== null && (
         <div
