@@ -17,6 +17,9 @@ export type UIMatch = {
   tickets_sold: number
 }
 
+// Simple pricing for demo purposes
+const PRICE_PER_TICKET_CENTS = 10000 // $100.00 per ticket
+
 export type UIBooking = {
   booking_id: number
   customer_id: string
@@ -214,20 +217,51 @@ export async function action({ request }: Route.ActionArgs) {
 
   if (intent === 'confirm-booking') {
     const id = Number(formData.get('booking_id'))
-    const res = db
-      .prepare(
-        `UPDATE bookings SET status = 'CONFIRMED' WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
-      )
-      .run(id, Number(customerId))
-    if (!res.changes) {
-      return data({ formError: 'Booking not found or already processed.' }, { status: 404 })
-    }
+    const customerIdNum = Number(customerId)
 
-    return redirect('/dashboard', {
-      headers: {
-        'Set-Cookie': await cookieSessionStorage.commitSession(session),
-      },
-    })
+    try {
+      const confirmAndCreatePayment = db.transaction(() => {
+        const res = db
+          .prepare(
+            `UPDATE bookings SET status = 'CONFIRMED' WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
+          )
+          .run(id, customerIdNum)
+        if (!res.changes) {
+          throw new Error('NOT_FOUND_OR_PROCESSED')
+        }
+
+        const bookingRow = db
+          .prepare(
+            `SELECT quantity FROM bookings WHERE booking_id = ? AND customer_id = ?`
+          )
+          .get(id, customerIdNum) as { quantity: number } | undefined
+
+        const qty = bookingRow?.quantity ?? 0
+        if (qty <= 0) {
+          throw new Error('INVALID_QUANTITY')
+        }
+
+        const amountCents = qty * PRICE_PER_TICKET_CENTS
+
+        db.prepare(
+          `INSERT INTO payments (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', 'CARD', 'COMPLETED')`
+        ).run(id, amountCents)
+      })
+
+      confirmAndCreatePayment()
+
+      return redirect('/dashboard', {
+        headers: {
+          'Set-Cookie': await cookieSessionStorage.commitSession(session),
+        },
+      })
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error && err.message === 'NOT_FOUND_OR_PROCESSED'
+          ? 'Booking not found or already processed.'
+          : 'Unable to confirm booking and create payment.'
+      return data({ formError: message }, { status: 400 })
+    }
   }
 
   if (intent === 'delete-booking') {
