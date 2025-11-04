@@ -766,7 +766,7 @@ export default function Dashboard({
                       )}
                     </div>
                     <div className="text-sm text-slate-700 dark:text-white/70">{when}</div>
-                    <div className="text-sm text-slate-700 dark:text-white/70">Seat {t.seat_number}</div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">Seat {t.seat_number} · {t.seat_type === 'VIP' ? 'VIP' : 'Standard'}</div>
                     <div className="text-sm text-slate-600 dark:text-white/60">@ {m?.stadium ?? '—'}</div>
                     <div className="text-sm text-slate-700 dark:text-white/70">Price ${(t.price_cents / 100).toFixed(2)}</div>
                   </div>
