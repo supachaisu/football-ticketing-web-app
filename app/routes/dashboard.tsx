@@ -43,6 +43,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     request.headers.get('Cookie')
   )
   const customerId = (session.get('customerId') as string | undefined) ?? null
+  const isAdmin = Boolean((session.get('isAdmin') as string | undefined) ?? null)
 
   if (!customerId) {
     return redirect('/login', {
@@ -113,6 +114,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return data({
     customerId,
     customerName: customer.name,
+    isAdmin,
     matches,
     bookings,
   } as const)
@@ -256,11 +258,11 @@ export default function Dashboard({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { customerName, customerId, matches, bookings } = loaderData
+  const { customerName, customerId, matches, bookings, isAdmin } = loaderData
   const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null)
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen pb-16">
       <title>Dashboard | Football Ticketing</title>
       <meta
         name="description"
@@ -278,6 +280,14 @@ export default function Dashboard({
               Signed in as <span className="font-medium">{customerName}</span>
             </span>
             <span className="h-4 w-px bg-slate-900/10 dark:bg-white/10" />
+            {isAdmin ? (
+              <Link
+                to="/admin"
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+              >
+                Admin
+              </Link>
+            ) : null}
             <Form method="post" replace>
               <input type="hidden" name="_action" value="sign-out" />
               <button

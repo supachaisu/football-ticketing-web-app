@@ -13,8 +13,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     request.headers.get('Cookie')
   )
   const customerId = (session.get('customerId') as string | undefined) ?? null
+  const isAdmin = Boolean(
+    (session.get('isAdmin') as string | undefined) ?? null
+  )
 
   if (customerId) {
+    if (isAdmin) return redirect('/admin')
+
     return redirect('/dashboard')
   }
 }
@@ -53,6 +58,16 @@ export async function action({ request }: Route.ActionArgs) {
     request.headers.get('Cookie')
   )
   session.set('customerId', String(customer.customer_id))
+
+  if (customer.email === 'admin@example.com') {
+    session.set('isAdmin', 'true')
+
+    return redirect('/admin', {
+      headers: {
+        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+      },
+    })
+  }
 
   return redirect('/dashboard', {
     headers: {
