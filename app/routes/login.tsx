@@ -30,7 +30,7 @@ export async function action({ request }: Route.ActionArgs) {
   const _password = String(formData.get('password') || '')
 
   const customer = db
-    .prepare<Email, Customer>('SELECT * FROM customers WHERE email = ?')
+    .prepare<Email, Customer>('SELECT * FROM customer WHERE email = ?')
     .get(Schema.decodeUnknownSync(Email)(_email))
 
   if (!customer) {
@@ -41,7 +41,7 @@ export async function action({ request }: Route.ActionArgs) {
     .prepare<
       [number | bigint],
       { hash: string }
-    >('SELECT hash FROM password_hashes WHERE customer_id = ?')
+    >('SELECT hash FROM password_hash WHERE customer_id = ?')
     .get(customer.customer_id)
 
   if (!passwordHashRow) {

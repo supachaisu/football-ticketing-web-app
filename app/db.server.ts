@@ -25,9 +25,9 @@ if (result.integrity_check !== 'ok') {
 // Initialize the database schema
 //
 
-// Create customers table
+// Create customer table
 db.exec(`
-CREATE TABLE IF NOT EXISTS customers (
+CREATE TABLE IF NOT EXISTS customer (
   customer_id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
@@ -36,24 +36,24 @@ CREATE TABLE IF NOT EXISTS customers (
 )
 `)
 db.exec(
-  `CREATE INDEX IF NOT EXISTS idx_customer_created_at ON customers(created_at DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_customer_created_at ON customer(created_at DESC)`
 )
-db.exec(`CREATE INDEX IF NOT EXISTS idx_customer_email ON customers(email)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_customer_email ON customer(email)`)
 
-// Create password hashes table
+// Create password_hash table
 db.exec(`
-CREATE TABLE IF NOT EXISTS password_hashes (
+CREATE TABLE IF NOT EXISTS password_hash (
   customer_id INTEGER PRIMARY KEY,
   hash TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE
+  FOREIGN KEY (customer_id) REFERENCES customer(customer_id) ON DELETE CASCADE
 )
 `)
 
-// Create matches table
+// Create match table
 db.exec(`
-CREATE TABLE IF NOT EXISTS matches (
+CREATE TABLE IF NOT EXISTS match (
   match_id INTEGER PRIMARY KEY,
   home_team TEXT NOT NULL,
   away_team TEXT NOT NULL,
@@ -66,11 +66,11 @@ CREATE TABLE IF NOT EXISTS matches (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 `)
-db.exec(`CREATE INDEX IF NOT EXISTS idx_match_date ON matches(match_date)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_match_date ON match(match_date)`)
 
-// Create bookings table
+// Create booking table
 db.exec(`
-CREATE TABLE IF NOT EXISTS bookings (
+CREATE TABLE IF NOT EXISTS booking (
   booking_id INTEGER PRIMARY KEY,
   customer_id INTEGER NOT NULL,
   match_id INTEGER NOT NULL,
@@ -79,36 +79,36 @@ CREATE TABLE IF NOT EXISTS bookings (
   booking_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE,
-  FOREIGN KEY (match_id) REFERENCES matches(match_id) ON DELETE CASCADE
+  FOREIGN KEY (customer_id) REFERENCES customer(customer_id) ON DELETE CASCADE,
+  FOREIGN KEY (match_id) REFERENCES match(match_id) ON DELETE CASCADE
 )
 `)
 db.exec(
-  `CREATE INDEX IF NOT EXISTS idx_booking_customer ON bookings(customer_id)`
+  `CREATE INDEX IF NOT EXISTS idx_booking_customer ON booking(customer_id)`
 )
-db.exec(`CREATE INDEX IF NOT EXISTS idx_booking_match ON bookings(match_id)`)
-db.exec(`CREATE INDEX IF NOT EXISTS idx_booking_status ON bookings(status)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_booking_match ON booking(match_id)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_booking_status ON booking(status)`)
 db.exec(
-  `CREATE INDEX IF NOT EXISTS idx_booking_date ON bookings(booking_date DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_booking_date ON booking(booking_date DESC)`
 )
 
-// Create tickets table
+// Create ticket table
 db.exec(`
-CREATE TABLE IF NOT EXISTS tickets (
+CREATE TABLE IF NOT EXISTS ticket (
   ticket_id INTEGER PRIMARY KEY,
   booking_id INTEGER NOT NULL,
   seat_number TEXT NOT NULL,
   seat_type TEXT NOT NULL,
   price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE
+  FOREIGN KEY (booking_id) REFERENCES booking(booking_id) ON DELETE CASCADE
 )
 `)
-db.exec(`CREATE INDEX IF NOT EXISTS idx_ticket_booking ON tickets(booking_id)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_ticket_booking ON ticket(booking_id)`)
 
-// Create payments table
+// Create payment table
 db.exec(`
-CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE IF NOT EXISTS payment (
   payment_id INTEGER PRIMARY KEY,
   booking_id INTEGER NOT NULL,
   amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
@@ -118,16 +118,16 @@ CREATE TABLE IF NOT EXISTS payments (
   status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED')),
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE
+  FOREIGN KEY (booking_id) REFERENCES booking(booking_id) ON DELETE CASCADE
 )
 `)
 db.exec(
-  `CREATE INDEX IF NOT EXISTS idx_payment_booking ON payments(booking_id)`
+  `CREATE INDEX IF NOT EXISTS idx_payment_booking ON payment(booking_id)`
 )
 db.exec(
-  `CREATE INDEX IF NOT EXISTS idx_payment_date ON payments(payment_date DESC)`
+  `CREATE INDEX IF NOT EXISTS idx_payment_date ON payment(payment_date DESC)`
 )
-db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_status ON payments(status)`)
+db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_status ON payment(status)`)
 
 //
 // Seed initial data
@@ -135,7 +135,7 @@ db.exec(`CREATE INDEX IF NOT EXISTS idx_payment_status ON payments(status)`)
 
 // Seed some matches if none exist
 const matchCountRow = db
-  .prepare('SELECT COUNT(*) as count FROM matches')
+  .prepare('SELECT COUNT(*) as count FROM match')
   .get() as { count: number }
 
 if ((matchCountRow?.count ?? 0) === 0) {
@@ -176,7 +176,7 @@ if ((matchCountRow?.count ?? 0) === 0) {
   ]
 
   const insertMatch = db.prepare(
-    'INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO match (home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
   const insertAll = db.transaction(
     (

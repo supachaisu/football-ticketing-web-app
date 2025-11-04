@@ -121,11 +121,11 @@ export async function loader({ request }: Route.LoaderArgs) {
           m.tickets_total,
           (
             SELECT COALESCE(SUM(b.quantity), 0)
-            FROM bookings b
+            FROM booking b
             WHERE b.match_id = m.match_id
               AND b.status IN ('PENDING', 'CONFIRMED')
           ) AS tickets_sold
-        FROM matches m
+        FROM match m
         ORDER BY m.match_date ASC`
     )
     .all() as UIMatch[]
@@ -134,7 +134,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const dbBookings = db
     .prepare(
       `SELECT booking_id, customer_id, match_id, quantity, seat_type, booking_date, status 
-         FROM bookings 
+         FROM booking 
         WHERE customer_id = ?
         ORDER BY booking_date DESC`
     )
@@ -169,8 +169,8 @@ export async function loader({ request }: Route.LoaderArgs) {
          t.price_cents,
          t.created_at,
          b.match_id
-       FROM tickets t
-       JOIN bookings b ON b.booking_id = t.booking_id
+       FROM ticket t
+       JOIN booking b ON b.booking_id = t.booking_id
       WHERE b.customer_id = ?
       ORDER BY t.created_at DESC, t.ticket_id DESC`
     )
@@ -187,8 +187,8 @@ export async function loader({ request }: Route.LoaderArgs) {
          p.payment_date,
          p.payment_method,
          p.status
-       FROM payments p
-       JOIN bookings b ON b.booking_id = p.booking_id
+       FROM payment p
+       JOIN booking b ON b.booking_id = p.booking_id
       WHERE b.customer_id = ?
       ORDER BY p.payment_date DESC, p.payment_id DESC`
     )
@@ -255,7 +255,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     // Ensure match exists and compute remaining from DB
     const matchRow = db
-      .prepare(`SELECT match_id, tickets_total FROM matches WHERE match_id = ?`)
+      .prepare(`SELECT match_id, tickets_total FROM match WHERE match_id = ?`)
       .get(matchId) as { match_id: number; tickets_total: number } | undefined
     if (!matchRow)
       return data({ formError: 'Match not found.' }, { status: 404 })
@@ -263,7 +263,7 @@ export async function action({ request }: Route.ActionArgs) {
     const soldRow = db
       .prepare(
         `SELECT COALESCE(SUM(quantity), 0) as sold
-           FROM bookings
+           FROM booking
           WHERE match_id = ? AND status IN ('PENDING', 'CONFIRMED')`
       )
       .get(matchId) as { sold: number }
@@ -278,7 +278,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     // Insert booking as PENDING in DB
     db.prepare(
-      `INSERT INTO bookings (customer_id, match_id, quantity, seat_type, status) VALUES (?, ?, ?, ?, 'PENDING')`
+      `INSERT INTO booking (customer_id, match_id, quantity, seat_type, status) VALUES (?, ?, ?, ?, 'PENDING')`
     ).run(Number(customerId), matchId, quantity, seatType)
 
     return redirect('/dashboard', {
@@ -292,7 +292,7 @@ export async function action({ request }: Route.ActionArgs) {
     const id = Number(formData.get('booking_id'))
     const res = db
       .prepare(
-        `UPDATE bookings SET status = 'CANCELLED' WHERE booking_id = ? AND customer_id = ?`
+        `UPDATE booking SET status = 'CANCELLED' WHERE booking_id = ? AND customer_id = ?`
       )
       .run(id, Number(customerId))
     if (!res.changes) {
@@ -316,7 +316,7 @@ export async function action({ request }: Route.ActionArgs) {
       const confirmAndCreatePayment = db.transaction(() => {
         const res = db
           .prepare(
-            `UPDATE bookings SET status = 'CONFIRMED' WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
+            `UPDATE booking SET status = 'CONFIRMED' WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
           )
           .run(id, customerIdNum)
         if (!res.changes) {
@@ -325,7 +325,7 @@ export async function action({ request }: Route.ActionArgs) {
 
         const bookingRow = db
           .prepare(
-            `SELECT quantity, match_id, seat_type FROM bookings WHERE booking_id = ? AND customer_id = ?`
+            `SELECT quantity, match_id, seat_type FROM booking WHERE booking_id = ? AND customer_id = ?`
           )
           .get(id, customerIdNum) as { quantity: number; match_id: number; seat_type: 'STANDARD' | 'VIP' } | undefined
 
@@ -335,7 +335,7 @@ export async function action({ request }: Route.ActionArgs) {
         }
 
         const priceRow = db
-          .prepare(`SELECT price_standard_cents, price_vip_cents FROM matches WHERE match_id = ?`)
+          .prepare(`SELECT price_standard_cents, price_vip_cents FROM match WHERE match_id = ?`)
           .get(bookingRow!.match_id) as { price_standard_cents: number; price_vip_cents: number } | undefined
         const unitPrice = bookingRow?.seat_type === 'VIP'
           ? (priceRow?.price_vip_cents ?? 0)
@@ -344,14 +344,14 @@ export async function action({ request }: Route.ActionArgs) {
         const amountCents = qty * unitPrice
 
         db.prepare(
-          `INSERT INTO payments (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', ?, 'COMPLETED')`
+          `INSERT INTO payment (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', ?, 'COMPLETED')`
         ).run(id, amountCents, method)
 
         // Create ticket records for this booking
         const insertTicket = db.prepare<
           [number, string, string, number]
         >(
-          `INSERT INTO tickets (booking_id, seat_number, seat_type, price_cents) VALUES (?, ?, ?, ?)`
+          `INSERT INTO ticket (booking_id, seat_number, seat_type, price_cents) VALUES (?, ?, ?, ?)`
         )
         for (let i = 0; i < qty; i++) {
           const seat = `B${id}-S${String(i + 1).padStart(2, '0')}`
@@ -379,7 +379,7 @@ export async function action({ request }: Route.ActionArgs) {
     const id = Number(formData.get('booking_id'))
     const res = db
       .prepare(
-        `DELETE FROM bookings WHERE booking_id = ? AND customer_id = ? AND status != 'CONFIRMED'`
+        `DELETE FROM booking WHERE booking_id = ? AND customer_id = ? AND status != 'CONFIRMED'`
       )
       .run(id, Number(customerId))
     if (!res.changes) {

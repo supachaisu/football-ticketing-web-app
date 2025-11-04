@@ -10,7 +10,7 @@ import { Email, type Customer } from '~/auth/schemas.server'
 
 const selectCustomerColumns = `
 	SELECT customer_id, name, email, phone
-	FROM customers
+	FROM customer
 ` as const
 
 /** Find a customer by numeric ID. */
@@ -43,7 +43,7 @@ export function findCustomerByEmailUnsafe(emailStr: string): Customer | null {
 export function customerExists(customerId: number | bigint): boolean {
 	const row = db
 		.prepare<[number | bigint], { count: number }>(
-			'SELECT COUNT(1) as count FROM customers WHERE customer_id = ?'
+			'SELECT COUNT(1) as count FROM customer WHERE customer_id = ?'
 		)
 		.get(customerId)
 	return (row?.count ?? 0) > 0

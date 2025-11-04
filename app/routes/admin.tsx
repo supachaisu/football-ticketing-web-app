@@ -32,7 +32,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     .prepare(
       `SELECT match_id, home_team, away_team, match_date, stadium, tickets_total,
               price_standard_cents, price_vip_cents
-         FROM matches
+         FROM match
          ORDER BY datetime(match_date) DESC`
     )
     .all() as AdminMatch[]
@@ -88,7 +88,7 @@ export async function action({ request }: Route.ActionArgs) {
     }
 
     const res = db
-      .prepare(`DELETE FROM matches WHERE match_id = ?`)
+      .prepare(`DELETE FROM match WHERE match_id = ?`)
       .run(matchId)
 
     if (!res.changes) {
@@ -156,7 +156,7 @@ export async function action({ request }: Route.ActionArgs) {
 
     const res = db
       .prepare(
-        `UPDATE matches
+        `UPDATE match
            SET home_team = ?,
                away_team = ?,
                match_date = ?,
@@ -238,9 +238,9 @@ export async function action({ request }: Route.ActionArgs) {
     )
   }
 
-  // Insert the match
-  db.prepare(
-     `INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents)
+    // Insert the match
+    db.prepare(
+      `INSERT INTO match (home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents)
       VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents)
 

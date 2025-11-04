@@ -42,7 +42,7 @@ export async function action({ request }: { request: Request }) {
   // Verify if email already exists
   //
   const existing = db
-    .prepare<Email, Customer>('SELECT * FROM customers WHERE email = ?')
+    .prepare<Email, Customer>('SELECT * FROM customer WHERE email = ?')
     .get(email)
 
   if (existing) {
@@ -54,7 +54,7 @@ export async function action({ request }: { request: Request }) {
   //
 
   const insert = db.prepare<[string, Email, string]>(
-    'INSERT INTO customers (name, email, phone) VALUES (?, ?, ?)'
+    'INSERT INTO customer (name, email, phone) VALUES (?, ?, ?)'
   )
   const result = insert.run(_name, email, _phone)
   const customerId = result.lastInsertRowid
@@ -64,7 +64,7 @@ export async function action({ request }: { request: Request }) {
   //
   const passwordHash = await hashPassword(_password)
   db.prepare<[number | bigint, string]>(
-    `INSERT INTO password_hashes (customer_id, hash) VALUES (?, ?)`
+    `INSERT INTO password_hash (customer_id, hash) VALUES (?, ?)`
   ).run(customerId, passwordHash)
 
   return redirect('/login')
