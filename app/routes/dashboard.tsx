@@ -15,16 +15,18 @@ export type UIMatch = {
   stadium: string
   tickets_total: number
   tickets_sold: number
+  price_standard_cents: number
+  price_vip_cents: number
 }
 
-// Simple pricing for demo purposes
-const PRICE_PER_TICKET_CENTS = 10000 // $100.00 per ticket
+// Pricing is now per match and seat type via matches.price_*_cents
 
 export type UIBooking = {
   booking_id: number
   customer_id: string
   match_id: number
   quantity: number
+  seat_type: 'STANDARD' | 'VIP'
   booking_date: string // ISO-8601
   status: 'Pending' | 'Paid' | 'Cancel'
 }
@@ -35,9 +37,36 @@ export type UITicket = {
   booking_id: number
   match_id: number
   seat_number: string
-  ticket_type: string
+  seat_type: string
   price_cents: number
   created_at: string
+}
+
+// Payment UI type
+export type UIPayment = {
+  payment_id: number
+  booking_id: number
+  amount_cents: number
+  currency: string
+  payment_date: string
+  payment_method: 'CARD' | 'THAI_QR'
+  status: 'PENDING' | 'COMPLETED' | 'FAILED'
+}
+
+function prettyMethod(method: UIPayment['payment_method'] | string) {
+  return method === 'THAI_QR' ? 'Thai QR' : 'Card'
+}
+
+function formatCentsUSD(cents: number) {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+    }).format(cents / 100)
+  } catch {
+    return `$${(cents / 100).toFixed(2)}`
+  }
 }
 
 // ---- Map DB booking status to UI status ----
@@ -87,6 +116,8 @@ export async function loader({ request }: Route.LoaderArgs) {
           m.away_team,
           m.match_date,
           m.stadium,
+          m.price_standard_cents,
+          m.price_vip_cents,
           m.tickets_total,
           (
             SELECT COALESCE(SUM(b.quantity), 0)
@@ -102,7 +133,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Load current user's bookings from DB
   const dbBookings = db
     .prepare(
-      `SELECT booking_id, customer_id, match_id, quantity, booking_date, status 
+      `SELECT booking_id, customer_id, match_id, quantity, seat_type, booking_date, status 
          FROM bookings 
         WHERE customer_id = ?
         ORDER BY booking_date DESC`
@@ -112,6 +143,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     customer_id: number
     match_id: number
     quantity: number
+    seat_type: 'STANDARD' | 'VIP'
     booking_date: string
     status: string
   }>
@@ -121,6 +153,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     customer_id: String(b.customer_id),
     match_id: b.match_id,
     quantity: b.quantity,
+    seat_type: b.seat_type,
     booking_date: b.booking_date,
     status: dbStatusToUI(b.status),
   }))
@@ -132,7 +165,7 @@ export async function loader({ request }: Route.LoaderArgs) {
          t.ticket_id,
          t.booking_id,
          t.seat_number,
-         t.ticket_type,
+         t.seat_type,
          t.price_cents,
          t.created_at,
          b.match_id
@@ -143,6 +176,31 @@ export async function loader({ request }: Route.LoaderArgs) {
     )
     .all(Number(customerId)) as UITicket[]
 
+  // Load payments for user's bookings and map by booking_id (latest first)
+  const paymentRows = db
+    .prepare(
+      `SELECT 
+         p.payment_id,
+         p.booking_id,
+         p.amount_cents,
+         p.currency,
+         p.payment_date,
+         p.payment_method,
+         p.status
+       FROM payments p
+       JOIN bookings b ON b.booking_id = p.booking_id
+      WHERE b.customer_id = ?
+      ORDER BY p.payment_date DESC, p.payment_id DESC`
+    )
+    .all(Number(customerId)) as UIPayment[]
+
+  const paymentsByBookingId: Record<number, UIPayment> = {}
+  for (const row of paymentRows) {
+    if (!paymentsByBookingId[row.booking_id]) {
+      paymentsByBookingId[row.booking_id] = row
+    }
+  }
+
   return data({
     customerId,
     customerName: customer.name,
@@ -150,6 +208,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     matches,
     bookings,
     tickets,
+    paymentsByBookingId,
   } as const)
 }
 
@@ -181,6 +240,8 @@ export async function action({ request }: Route.ActionArgs) {
 
     const matchId = Number(formData.get('match_id'))
     const quantity = Number(formData.get('quantity'))
+    const seatTypeRaw = String(formData.get('seat_type') ?? 'STANDARD')
+    const seatType = seatTypeRaw === 'VIP' ? 'VIP' : 'STANDARD'
 
     if (!Number.isFinite(matchId)) {
       return data({ formError: 'Invalid match.' }, { status: 400 })
@@ -217,8 +278,8 @@ export async function action({ request }: Route.ActionArgs) {
 
     // Insert booking as PENDING in DB
     db.prepare(
-      `INSERT INTO bookings (customer_id, match_id, quantity, status) VALUES (?, ?, ?, 'PENDING')`
-    ).run(Number(customerId), matchId, quantity)
+      `INSERT INTO bookings (customer_id, match_id, quantity, seat_type, status) VALUES (?, ?, ?, ?, 'PENDING')`
+    ).run(Number(customerId), matchId, quantity, seatType)
 
     return redirect('/dashboard', {
       headers: {
@@ -264,16 +325,23 @@ export async function action({ request }: Route.ActionArgs) {
 
         const bookingRow = db
           .prepare(
-            `SELECT quantity FROM bookings WHERE booking_id = ? AND customer_id = ?`
+            `SELECT quantity, match_id, seat_type FROM bookings WHERE booking_id = ? AND customer_id = ?`
           )
-          .get(id, customerIdNum) as { quantity: number } | undefined
+          .get(id, customerIdNum) as { quantity: number; match_id: number; seat_type: 'STANDARD' | 'VIP' } | undefined
 
         const qty = bookingRow?.quantity ?? 0
         if (qty <= 0) {
           throw new Error('INVALID_QUANTITY')
         }
 
-        const amountCents = qty * PRICE_PER_TICKET_CENTS
+        const priceRow = db
+          .prepare(`SELECT price_standard_cents, price_vip_cents FROM matches WHERE match_id = ?`)
+          .get(bookingRow!.match_id) as { price_standard_cents: number; price_vip_cents: number } | undefined
+        const unitPrice = bookingRow?.seat_type === 'VIP'
+          ? (priceRow?.price_vip_cents ?? 0)
+          : (priceRow?.price_standard_cents ?? 0)
+
+        const amountCents = qty * unitPrice
 
         db.prepare(
           `INSERT INTO payments (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', ?, 'COMPLETED')`
@@ -283,11 +351,11 @@ export async function action({ request }: Route.ActionArgs) {
         const insertTicket = db.prepare<
           [number, string, string, number]
         >(
-          `INSERT INTO tickets (booking_id, seat_number, ticket_type, price_cents) VALUES (?, ?, ?, ?)`
+          `INSERT INTO tickets (booking_id, seat_number, seat_type, price_cents) VALUES (?, ?, ?, ?)`
         )
         for (let i = 0; i < qty; i++) {
           const seat = `B${id}-S${String(i + 1).padStart(2, '0')}`
-          insertTicket.run(id, seat, 'STANDARD', PRICE_PER_TICKET_CENTS)
+          insertTicket.run(id, seat, bookingRow!.seat_type, unitPrice)
         }
       })
 
@@ -335,7 +403,7 @@ export default function Dashboard({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { customerName, customerId, matches, bookings, tickets, isAdmin } = loaderData
+  const { customerName, customerId, matches, bookings, tickets, paymentsByBookingId, isAdmin } = loaderData
   const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null)
   const [payBookingId, setPayBookingId] = useState<number | null>(null)
 
@@ -405,6 +473,9 @@ export default function Dashboard({
                 <p className="text-sm text-slate-600 dark:text-white/60">
                   Select a match and quantity to reserve your seats.
                 </p>
+                <p className="mt-1 text-sm text-slate-700 dark:text-white/70">
+                  Price per seat varies by match.
+                </p>
               </div>
               <div className="p-5">
                 <Form method="post" replace className="grid gap-4">
@@ -427,7 +498,7 @@ export default function Dashboard({
                       {matches.map((m) => {
                         const remaining = m.tickets_total - m.tickets_sold
                         const d = new Date(m.match_date)
-                        const label = `${m.home_team} vs ${m.away_team} — ${d.toLocaleString()} @ ${m.stadium}`
+                        const label = `${m.home_team} vs ${m.away_team} — ${d.toLocaleString()} @ ${m.stadium} • Std ${formatCentsUSD(m.price_standard_cents)} • VIP ${formatCentsUSD(m.price_vip_cents)}`
                         return (
                           <option
                             key={m.match_id}
@@ -458,6 +529,22 @@ export default function Dashboard({
                     <p className="text-xs text-slate-600 dark:text-white/60">
                       You can book up to 10 tickets per order.
                     </p>
+                  </div>
+
+                  <div className="grid gap-2 sm:max-w-xs">
+                    <label htmlFor="seat_type" className="text-sm font-medium">
+                      Seat type
+                    </label>
+                    <select
+                      id="seat_type"
+                      name="seat_type"
+                      required
+                      defaultValue="STANDARD"
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    >
+                      <option value="STANDARD">Standard</option>
+                      <option value="VIP">VIP</option>
+                    </select>
                   </div>
 
                   <div>
@@ -534,6 +621,10 @@ export default function Dashboard({
                   const isPending = b.status === 'Pending'
                   const isCancelled = b.status === 'Cancel'
                   const ticketCount = tickets.filter((t) => t.booking_id === b.booking_id).length
+                  const pay = paymentsByBookingId[b.booking_id]
+                  const mtd = pay?.payment_method
+                  const unit = m ? (b.seat_type === 'VIP' ? m.price_vip_cents : m.price_standard_cents) : 0
+                  const totalCents = b.quantity * unit
                   return (
                     <div
                       key={b.booking_id}
@@ -570,11 +661,20 @@ export default function Dashboard({
                       <div className="text-sm text-slate-700 dark:text-white/70">
                         <div>{when}</div>
                         <div className="mt-0.5">Qty: {b.quantity}</div>
+                        <div className="mt-0.5">Seat type: {b.seat_type === 'VIP' ? 'VIP' : 'Standard'}</div>
                         {m && (
                           <div className="mt-0.5 text-slate-600 dark:text-white/60">
                             @ {m.stadium}
                           </div>
                         )}
+                        <div className="mt-0.5 text-slate-700 dark:text-white/70">
+                          Total: {formatCentsUSD(totalCents)}
+                        </div>
+                        {!isPending && !isCancelled ? (
+                          <div className="mt-0.5 text-slate-600 dark:text-white/60">
+                            Paid with: {mtd ? prettyMethod(mtd) : '—'}
+                          </div>
+                        ) : null}
                         {!isPending && !isCancelled && ticketCount > 0 ? (
                           <div className="mt-1 text-slate-600 dark:text-white/60">
                             Tickets issued: {ticketCount}
@@ -629,7 +729,7 @@ export default function Dashboard({
                                 .filter((t) => t.booking_id === b.booking_id)
                                 .map((t) => (
                                   <li key={t.ticket_id} className="text-sm text-slate-700 dark:text-white/70">
-                                    Seat {t.seat_number} · {t.ticket_type} · ${(t.price_cents / 100).toFixed(2)}
+                                    Seat {t.seat_number} · {t.seat_type} · ${(t.price_cents / 100).toFixed(2)}
                                   </li>
                                 ))}
                             </ul>

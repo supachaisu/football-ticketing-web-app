@@ -11,6 +11,8 @@ type AdminMatch = {
   match_date: string
   stadium: string
   tickets_total: number
+  price_standard_cents: number
+  price_vip_cents: number
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -28,7 +30,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const matches = db
     .prepare(
-      `SELECT match_id, home_team, away_team, match_date, stadium, tickets_total
+      `SELECT match_id, home_team, away_team, match_date, stadium, tickets_total,
+              price_standard_cents, price_vip_cents
          FROM matches
          ORDER BY datetime(match_date) DESC`
     )
@@ -42,6 +45,16 @@ function parsePositiveInt(value: FormDataEntryValue | null): number | null {
   if (!Number.isFinite(n)) return null
   if (n <= 0) return null
   return Math.floor(n)
+}
+
+function parseMoneyToCents(value: FormDataEntryValue | null): number | null {
+  if (value == null) return null
+  const s = String(value).trim()
+  if (!s) return null
+  const n = Number(s)
+  if (!Number.isFinite(n) || n < 0) return null
+  // Round to cents
+  return Math.round(n * 100)
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -102,6 +115,8 @@ export async function action({ request }: Route.ActionArgs) {
     const away_team = String(form.get('away_team') || '').trim()
     const stadium = String(form.get('stadium') || '').trim()
     const tickets_total = parsePositiveInt(form.get('tickets_total'))
+    const price_standard_cents = parseMoneyToCents(form.get('price_standard'))
+    const price_vip_cents = parseMoneyToCents(form.get('price_vip'))
 
     const rawDate = String(form.get('match_date') || '').trim()
     let match_date: string | null = null
@@ -112,11 +127,19 @@ export async function action({ request }: Route.ActionArgs) {
       }
     }
 
-    if (!home_team || !away_team || !stadium || !match_date || !tickets_total) {
+    if (
+      !home_team ||
+      !away_team ||
+      !stadium ||
+      !match_date ||
+      !tickets_total ||
+      price_standard_cents == null ||
+      price_vip_cents == null
+    ) {
       return data(
         {
           formError:
-            'All fields are required and tickets must be a positive number.',
+            'All fields are required. Tickets must be positive, prices cannot be negative.',
         },
         { status: 400 }
       )
@@ -139,10 +162,21 @@ export async function action({ request }: Route.ActionArgs) {
                match_date = ?,
                stadium = ?,
                tickets_total = ?,
+               price_standard_cents = ?,
+               price_vip_cents = ?,
                updated_at = CURRENT_TIMESTAMP
          WHERE match_id = ?`
       )
-      .run(home_team, away_team, match_date, stadium, tickets_total, matchId)
+      .run(
+        home_team,
+        away_team,
+        match_date,
+        stadium,
+        tickets_total,
+        price_standard_cents,
+        price_vip_cents,
+        matchId
+      )
 
     if (!res.changes) {
       return data({ formError: 'Match not found.' }, { status: 404 })
@@ -163,6 +197,8 @@ export async function action({ request }: Route.ActionArgs) {
   const away_team = String(form.get('away_team') || '').trim()
   const stadium = String(form.get('stadium') || '').trim()
   const tickets_total = parsePositiveInt(form.get('tickets_total'))
+  const price_standard_cents = parseMoneyToCents(form.get('price_standard'))
+  const price_vip_cents = parseMoneyToCents(form.get('price_vip'))
 
   const rawDate = String(form.get('match_date') || '').trim()
   let match_date: string | null = null
@@ -173,12 +209,20 @@ export async function action({ request }: Route.ActionArgs) {
     }
   }
 
-  if (!home_team || !away_team || !stadium || !match_date || !tickets_total) {
+  if (
+    !home_team ||
+    !away_team ||
+    !stadium ||
+    !match_date ||
+    !tickets_total ||
+    price_standard_cents == null ||
+    price_vip_cents == null
+  ) {
     return data(
       {
         formError:
-          'All fields are required and tickets must be a positive number.',
-        fields: { home_team, away_team, stadium, match_date: rawDate, tickets_total: String(tickets_total ?? '') },
+          'All fields are required. Tickets must be positive, prices cannot be negative.',
+        fields: { home_team, away_team, stadium, match_date: rawDate, tickets_total: String(tickets_total ?? ''), price_standard: String(form.get('price_standard') ?? ''), price_vip: String(form.get('price_vip') ?? '') },
       },
       { status: 400 }
     )
@@ -196,9 +240,9 @@ export async function action({ request }: Route.ActionArgs) {
 
   // Insert the match
   db.prepare(
-    `INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(home_team, away_team, match_date, stadium, tickets_total)
+     `INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents)
 
   return redirect('/admin', {
     headers: {
@@ -355,6 +399,39 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
                 </p>
               </div>
 
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <label htmlFor="price_standard" className="text-sm font-medium">
+                    Standard seat price (USD)
+                  </label>
+                  <input
+                    id="price_standard"
+                    name="price_standard"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    required
+                    placeholder="120.00"
+                    className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="price_vip" className="text-sm font-medium">
+                    VIP seat price (USD)
+                  </label>
+                  <input
+                    id="price_vip"
+                    name="price_vip"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    required
+                    placeholder="180.00"
+                    className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                  />
+                </div>
+              </div>
+
               <div>
                 <button
                   type="submit"
@@ -390,6 +467,9 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
                     </div>
                     <div className="text-sm text-slate-600 dark:text-white/60">
                       Tickets: {m.tickets_total}
+                    </div>
+                    <div className="text-sm text-slate-600 dark:text-white/60">
+                      Prices: Std ${(m.price_standard_cents / 100).toFixed(2)} · VIP ${(m.price_vip_cents / 100).toFixed(2)}
                     </div>
                     <div className="pt-2 flex items-center gap-2">
                       <button
@@ -438,6 +518,9 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
                     </div>
                     <div className="text-sm text-slate-600 dark:text-white/60">
                       Tickets: {m.tickets_total}
+                    </div>
+                    <div className="text-sm text-slate-600 dark:text-white/60">
+                      Prices: Std ${(m.price_standard_cents / 100).toFixed(2)} · VIP ${(m.price_vip_cents / 100).toFixed(2)}
                     </div>
                     <div className="pt-2 flex items-center gap-2">
                       <button
@@ -551,6 +634,35 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
                     defaultValue={editMatch?.tickets_total ?? 1}
                     className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
                   />
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <label htmlFor="edit_price_standard" className="text-sm font-medium">Standard seat price (USD)</label>
+                    <input
+                      id="edit_price_standard"
+                      name="price_standard"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      required
+                      defaultValue={editMatch ? (editMatch.price_standard_cents / 100).toFixed(2) : ''}
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <label htmlFor="edit_price_vip" className="text-sm font-medium">VIP seat price (USD)</label>
+                    <input
+                      id="edit_price_vip"
+                      name="price_vip"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      required
+                      defaultValue={editMatch ? (editMatch.price_vip_cents / 100).toFixed(2) : ''}
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-2">

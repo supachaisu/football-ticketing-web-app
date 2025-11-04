@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS matches (
   away_team TEXT NOT NULL,
   match_date TEXT NOT NULL,
   stadium TEXT NOT NULL,
+  price_standard_cents INTEGER NOT NULL CHECK (price_standard_cents >= 0),
+  price_vip_cents INTEGER NOT NULL CHECK (price_vip_cents >= 0),
   tickets_total INTEGER NOT NULL CHECK (tickets_total > 0),
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -73,6 +75,7 @@ CREATE TABLE IF NOT EXISTS bookings (
   customer_id INTEGER NOT NULL,
   match_id INTEGER NOT NULL,
   quantity INTEGER NOT NULL CHECK (quantity > 0),
+  seat_type TEXT NOT NULL DEFAULT 'STANDARD' CHECK (seat_type IN ('STANDARD','VIP')),
   booking_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'CONFIRMED', 'CANCELLED')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -95,7 +98,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   ticket_id INTEGER PRIMARY KEY,
   booking_id INTEGER NOT NULL,
   seat_number TEXT NOT NULL,
-  ticket_type TEXT NOT NULL,
+  seat_type TEXT NOT NULL,
   price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE
@@ -140,23 +143,47 @@ if ((matchCountRow?.count ?? 0) === 0) {
   const isoPlusDays = (days: number) =>
     new Date(now + days * 86400000).toISOString()
 
-  const sampleMatches: Array<[string, string, string, string, number]> = [
+  const sampleMatches: Array<
+    [string, string, string, string, number, number, number]
+  > = [
     [
       'Bangkok United',
       'Chiang Mai FC',
       isoPlusDays(7),
       'Thammasat Stadium',
       30000,
+      12000,
+      18000,
     ],
-    ['Muangthong Utd', 'Buriram Utd', isoPlusDays(14), 'SCG Stadium', 20000],
-    ['Port FC', 'BG Pathum', isoPlusDays(21), 'PAT Stadium', 12000],
+    [
+      'Muangthong Utd',
+      'Buriram Utd',
+      isoPlusDays(14),
+      'SCG Stadium',
+      20000,
+      15000,
+      22000,
+    ],
+    [
+      'Port FC',
+      'BG Pathum',
+      isoPlusDays(21),
+      'PAT Stadium',
+      12000,
+      9000,
+      14000,
+    ],
   ]
 
   const insertMatch = db.prepare(
-    'INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO matches (home_team, away_team, match_date, stadium, tickets_total, price_standard_cents, price_vip_cents) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
   const insertAll = db.transaction(
-    (rows: Array<[string, string, string, string, number]>) => {
+    (
+      rows: Array<
+        [string, string, string, string, number, number, number]
+      >
+    ) => {
       for (const row of rows) insertMatch.run(...row)
     }
   )
