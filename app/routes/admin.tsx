@@ -92,6 +92,69 @@ export async function action({ request }: Route.ActionArgs) {
     })
   }
 
+  if (intent === 'update-match') {
+    const matchId = Number(form.get('match_id'))
+    if (!Number.isFinite(matchId)) {
+      return data({ formError: 'Invalid match id.' }, { status: 400 })
+    }
+
+    const home_team = String(form.get('home_team') || '').trim()
+    const away_team = String(form.get('away_team') || '').trim()
+    const stadium = String(form.get('stadium') || '').trim()
+    const tickets_total = parsePositiveInt(form.get('tickets_total'))
+
+    const rawDate = String(form.get('match_date') || '').trim()
+    let match_date: string | null = null
+    if (rawDate) {
+      const d = new Date(rawDate)
+      if (!isNaN(d.getTime())) {
+        match_date = d.toISOString()
+      }
+    }
+
+    if (!home_team || !away_team || !stadium || !match_date || !tickets_total) {
+      return data(
+        {
+          formError:
+            'All fields are required and tickets must be a positive number.',
+        },
+        { status: 400 }
+      )
+    }
+
+    if (home_team.toLowerCase() === away_team.toLowerCase()) {
+      return data(
+        {
+          formError: 'Home and away teams must be different.',
+        },
+        { status: 400 }
+      )
+    }
+
+    const res = db
+      .prepare(
+        `UPDATE matches
+           SET home_team = ?,
+               away_team = ?,
+               match_date = ?,
+               stadium = ?,
+               tickets_total = ?,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE match_id = ?`
+      )
+      .run(home_team, away_team, match_date, stadium, tickets_total, matchId)
+
+    if (!res.changes) {
+      return data({ formError: 'Match not found.' }, { status: 404 })
+    }
+
+    return redirect('/admin', {
+      headers: {
+        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+      },
+    })
+  }
+
   if (intent !== 'create-match') {
     return data({ formError: 'Unsupported action.' }, { status: 400 })
   }
@@ -149,6 +212,7 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
   const err = actionData?.formError as string | undefined
   const [deleteMatchId, setDeleteMatchId] = useState<number | null>(null)
   const [deleteMatchLabel, setDeleteMatchLabel] = useState<string>('')
+  const [editMatch, setEditMatch] = useState<AdminMatch | null>(null)
   const now = Date.now()
   const upcoming = matches
     .filter((m) => new Date(m.match_date).getTime() >= now)
@@ -327,7 +391,14 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
                     <div className="text-sm text-slate-600 dark:text-white/60">
                       Tickets: {m.tickets_total}
                     </div>
-                    <div className="pt-2">
+                    <div className="pt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditMatch(m)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -368,7 +439,14 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
                     <div className="text-sm text-slate-600 dark:text-white/60">
                       Tickets: {m.tickets_total}
                     </div>
-                    <div className="pt-2">
+                    <div className="pt-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditMatch(m)}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={() => {
@@ -387,6 +465,114 @@ export default function AdminDashboard({ loaderData, actionData }: Route.Compone
           </div>
         </section>
 
+      {editMatch !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-match-title"
+        >
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setEditMatch(null)}
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          />
+
+          <div className="relative w-full max-w-lg rounded-2xl border border-slate-900/10 dark:border-white/10 bg-white dark:bg-slate-900 p-6 shadow-xl">
+            <h3 id="edit-match-title" className="text-lg font-medium">
+              Edit match
+            </h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-white/70">
+              Update the match details and save your changes.
+            </p>
+
+            <div className="mt-4">
+              <Form method="post" replace onSubmit={() => setEditMatch(null)} className="grid gap-4">
+                <input type="hidden" name="_action" value="update-match" />
+                <input type="hidden" name="match_id" value={editMatch?.match_id ?? ''} />
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <label htmlFor="edit_home_team" className="text-sm font-medium">Home team</label>
+                    <input
+                      id="edit_home_team"
+                      name="home_team"
+                      required
+                      defaultValue={editMatch?.home_team ?? ''}
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <label htmlFor="edit_away_team" className="text-sm font-medium">Away team</label>
+                    <input
+                      id="edit_away_team"
+                      name="away_team"
+                      required
+                      defaultValue={editMatch?.away_team ?? ''}
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <label htmlFor="edit_match_date" className="text-sm font-medium">Date & time</label>
+                    <input
+                      id="edit_match_date"
+                      name="match_date"
+                      type="datetime-local"
+                      required
+                      defaultValue={(editMatch ? (() => { const d = new Date(editMatch.match_date); const tz = d.getTimezoneOffset(); const local = new Date(d.getTime() - tz * 60000); return local.toISOString().slice(0,16) })() : '')}
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <label htmlFor="edit_stadium" className="text-sm font-medium">Stadium</label>
+                    <input
+                      id="edit_stadium"
+                      name="stadium"
+                      required
+                      defaultValue={editMatch?.stadium ?? ''}
+                      className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:max-w-xs gap-2">
+                  <label htmlFor="edit_tickets_total" className="text-sm font-medium">Total tickets</label>
+                  <input
+                    id="edit_tickets_total"
+                    name="tickets_total"
+                    type="number"
+                    min={1}
+                    step={1}
+                    required
+                    defaultValue={editMatch?.tickets_total ?? 1}
+                    className="w-full rounded-xl border border-slate-900/10 dark:border-white/15 bg-white/70 dark:bg-white/5 px-4 py-2.5 text-slate-900 dark:text-white shadow-inner outline-none focus:border-slate-900/20 dark:focus:border-white/30 focus:ring-2 focus:ring-slate-900/10 dark:focus:ring-white/20"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditMatch(null)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-4 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 text-white dark:bg-white/90 dark:text-slate-900 px-4 py-2 text-sm font-medium shadow hover:bg-slate-800 dark:hover:bg-white"
+                  >
+                    Save changes
+                  </button>
+                </div>
+              </Form>
+            </div>
+          </div>
+        </div>
+      )}
       {deleteMatchId !== null && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"

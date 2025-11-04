@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS matches (
   match_date TEXT NOT NULL,
   stadium TEXT NOT NULL,
   tickets_total INTEGER NOT NULL CHECK (tickets_total > 0),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 `)
@@ -100,21 +101,6 @@ CREATE TABLE IF NOT EXISTS tickets (
   FOREIGN KEY (booking_id) REFERENCES bookings(booking_id) ON DELETE CASCADE
 )
 `)
-
-// Ensure tickets_total column exists (SQLite doesn't support IF NOT EXISTS for ADD COLUMN)
-try {
-  const cols = db.prepare(`PRAGMA table_info('matches')`).all() as Array<{
-    name: string
-  }>
-  const hasTicketsTotal = cols.some((c) => c.name === 'tickets_total')
-  if (!hasTicketsTotal) {
-    db.exec(
-      `ALTER TABLE matches ADD COLUMN tickets_total INTEGER NOT NULL DEFAULT 20000`
-    )
-  }
-} catch {
-  // best-effort; if this fails, subsequent queries will still work with a default in code
-}
 db.exec(`CREATE INDEX IF NOT EXISTS idx_ticket_booking ON tickets(booking_id)`)
 
 // Create payments table
