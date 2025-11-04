@@ -30,3 +30,13 @@ Your application will be available at `http://localhost:5173`.
 ---
 
 Built with ❤️ using React Router.
+
+## Ticketing Flow
+
+- Book tickets in `Dashboard` by selecting a match and quantity.
+- Confirm payment via the "Make purchase" button. On confirmation:
+	- The booking is marked `CONFIRMED`.
+	- A `payment` record is created with `COMPLETED` status.
+	- Individual `tickets` are issued for the booking (one per quantity).
+- Issued tickets appear under the booking and in the "Your Tickets" section,
+	showing seat number, type, price, and match info.

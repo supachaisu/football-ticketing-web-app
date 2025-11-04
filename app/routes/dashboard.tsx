@@ -29,6 +29,17 @@ export type UIBooking = {
   status: 'Pending' | 'Paid' | 'Cancel'
 }
 
+// Ticket UI type
+export type UITicket = {
+  ticket_id: number
+  booking_id: number
+  match_id: number
+  seat_number: string
+  ticket_type: string
+  price_cents: number
+  created_at: string
+}
+
 // ---- Map DB booking status to UI status ----
 function dbStatusToUI(status: string): UIBooking['status'] {
   switch (status) {
@@ -114,12 +125,31 @@ export async function loader({ request }: Route.LoaderArgs) {
     status: dbStatusToUI(b.status),
   }))
 
+  // Load current user's tickets (join tickets -> bookings for ownership)
+  const tickets = db
+    .prepare(
+      `SELECT 
+         t.ticket_id,
+         t.booking_id,
+         t.seat_number,
+         t.ticket_type,
+         t.price_cents,
+         t.created_at,
+         b.match_id
+       FROM tickets t
+       JOIN bookings b ON b.booking_id = t.booking_id
+      WHERE b.customer_id = ?
+      ORDER BY t.created_at DESC, t.ticket_id DESC`
+    )
+    .all(Number(customerId)) as UITicket[]
+
   return data({
     customerId,
     customerName: customer.name,
     isAdmin,
     matches,
     bookings,
+    tickets,
   } as const)
 }
 
@@ -248,6 +278,17 @@ export async function action({ request }: Route.ActionArgs) {
         db.prepare(
           `INSERT INTO payments (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', ?, 'COMPLETED')`
         ).run(id, amountCents, method)
+
+        // Create ticket records for this booking
+        const insertTicket = db.prepare<
+          [number, string, string, number]
+        >(
+          `INSERT INTO tickets (booking_id, seat_number, ticket_type, price_cents) VALUES (?, ?, ?, ?)`
+        )
+        for (let i = 0; i < qty; i++) {
+          const seat = `B${id}-S${String(i + 1).padStart(2, '0')}`
+          insertTicket.run(id, seat, 'STANDARD', PRICE_PER_TICKET_CENTS)
+        }
       })
 
       confirmAndCreatePayment()
@@ -294,7 +335,7 @@ export default function Dashboard({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { customerName, customerId, matches, bookings, isAdmin } = loaderData
+  const { customerName, customerId, matches, bookings, tickets, isAdmin } = loaderData
   const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null)
   const [payBookingId, setPayBookingId] = useState<number | null>(null)
 
@@ -492,6 +533,7 @@ export default function Dashboard({
                   const when = m ? new Date(m.match_date).toLocaleString() : '—'
                   const isPending = b.status === 'Pending'
                   const isCancelled = b.status === 'Cancel'
+                  const ticketCount = tickets.filter((t) => t.booking_id === b.booking_id).length
                   return (
                     <div
                       key={b.booking_id}
@@ -533,6 +575,11 @@ export default function Dashboard({
                             @ {m.stadium}
                           </div>
                         )}
+                        {!isPending && !isCancelled && ticketCount > 0 ? (
+                          <div className="mt-1 text-slate-600 dark:text-white/60">
+                            Tickets issued: {ticketCount}
+                          </div>
+                        ) : null}
                       </div>
                       {isPending ? (
                         <div className="flex items-center gap-2">
@@ -571,10 +618,60 @@ export default function Dashboard({
                             Delete
                           </button>
                         </div>
-                      ) : null}
+                      ) : (
+                        ticketCount > 0 && (
+                          <div className="pt-2 border-t border-slate-900/10 dark:border-white/10">
+                            <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-white/50 mb-2">
+                              Tickets
+                            </div>
+                            <ul className="grid gap-1">
+                              {tickets
+                                .filter((t) => t.booking_id === b.booking_id)
+                                .map((t) => (
+                                  <li key={t.ticket_id} className="text-sm text-slate-700 dark:text-white/70">
+                                    Seat {t.seat_number} · {t.ticket_type} · ${(t.price_cents / 100).toFixed(2)}
+                                  </li>
+                                ))}
+                            </ul>
+                          </div>
+                        )
+                      )}
                     </div>
                   )
                 })}
+            </div>
+          )}
+        </section>
+
+        {/* Tickets summary section */}
+        <section className="space-y-3">
+          <h2 className="text-lg font-medium">Your Tickets</h2>
+          {tickets.length === 0 ? (
+            <p className="text-slate-600 dark:text-white/60">No tickets issued yet.</p>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {tickets.map((t) => {
+                const m = matches.find((mm) => mm.match_id === t.match_id)
+                const when = m ? new Date(m.match_date).toLocaleString() : '—'
+                return (
+                  <div key={t.ticket_id} className="rounded-2xl border border-slate-900/10 dark:border-white/10 bg-white/70 dark:bg-white/[0.02] shadow-sm backdrop-blur p-4 space-y-2">
+                    <div className="text-sm text-slate-600 dark:text-white/60">Ticket #{t.ticket_id}</div>
+                    <div className="font-medium">
+                      {m ? (
+                        <>
+                          {m.home_team} vs {m.away_team}
+                        </>
+                      ) : (
+                        'Match removed'
+                      )}
+                    </div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">{when}</div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">Seat {t.seat_number}</div>
+                    <div className="text-sm text-slate-600 dark:text-white/60">@ {m?.stadium ?? '—'}</div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">Price ${(t.price_cents / 100).toFixed(2)}</div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </section>
