@@ -1,108 +1,110 @@
-import { cookieSessionStorage } from '~/auth/sessions.server'
-import { Form, redirect, Link, data } from 'react-router'
-import type { Route } from './+types/dashboard'
-import { findCustomerById } from '~/repositories/customer.repository'
-import { db } from '~/db.server'
-import { useState } from 'react'
+import { useState } from "react";
+import { Form, Link, data, redirect } from "react-router";
+import { cookieSessionStorage } from "~/auth/sessions.server";
+import { db } from "~/db.server";
+import { findCustomerById } from "~/repositories/customer.repository";
+import type { Route } from "./+types/dashboard";
 
 // ---- Types that mirror the attached spec (Customer/Match/Booking/Payment) ----
 // Minimal client-facing types for this route
 export type UIMatch = {
-  match_id: number
-  home_team: string
-  away_team: string
-  match_date: string // ISO-8601
-  stadium: string
-  tickets_total: number
-  tickets_sold: number
-  price_standard_cents: number
-  price_vip_cents: number
-}
+  match_id: number;
+  home_team: string;
+  away_team: string;
+  match_date: string; // ISO-8601
+  stadium: string;
+  tickets_total: number;
+  tickets_sold: number;
+  price_standard_cents: number;
+  price_vip_cents: number;
+};
 
 // Pricing is now per match and seat type via matches.price_*_cents
 
 export type UIBooking = {
-  booking_id: number
-  customer_id: string
-  match_id: number
-  quantity: number
-  seat_type: 'STANDARD' | 'VIP'
-  booking_date: string // ISO-8601
-  status: 'Pending' | 'Paid' | 'Cancel'
-}
+  booking_id: number;
+  customer_id: string;
+  match_id: number;
+  quantity: number;
+  seat_type: "STANDARD" | "VIP";
+  booking_date: string; // ISO-8601
+  status: "Pending" | "Paid" | "Cancel";
+};
 
 // Ticket UI type
 export type UITicket = {
-  ticket_id: number
-  booking_id: number
-  match_id: number
-  seat_number: string
-  seat_type: string
-  price_cents: number
-  created_at: string
-}
+  ticket_id: number;
+  booking_id: number;
+  match_id: number;
+  seat_number: string;
+  seat_type: string;
+  price_cents: number;
+  created_at: string;
+};
 
 // Payment UI type
 export type UIPayment = {
-  payment_id: number
-  booking_id: number
-  amount_cents: number
-  currency: string
-  payment_date: string
-  payment_method: 'CARD' | 'THAI_QR'
-  status: 'PENDING' | 'COMPLETED' | 'FAILED'
-}
+  payment_id: number;
+  booking_id: number;
+  amount_cents: number;
+  currency: string;
+  payment_date: string;
+  payment_method: "CARD" | "THAI_QR";
+  status: "PENDING" | "COMPLETED" | "FAILED";
+};
 
-function prettyMethod(method: UIPayment['payment_method'] | string) {
-  return method === 'THAI_QR' ? 'Thai QR' : 'Card'
+function prettyMethod(method: UIPayment["payment_method"] | string) {
+  return method === "THAI_QR" ? "Thai QR" : "Card";
 }
 
 function formatCentsUSD(cents: number) {
   try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
       minimumFractionDigits: 2,
-    }).format(cents / 100)
+    }).format(cents / 100);
   } catch {
-    return `$${(cents / 100).toFixed(2)}`
+    return `$${(cents / 100).toFixed(2)}`;
   }
 }
 
 // ---- Map DB booking status to UI status ----
-function dbStatusToUI(status: string): UIBooking['status'] {
+function dbStatusToUI(status: string): UIBooking["status"] {
   switch (status) {
-    case 'CONFIRMED':
-      return 'Paid'
-    case 'CANCELLED':
-      return 'Cancel'
+    case "CONFIRMED":
+      return "Paid";
+    case "CANCELLED":
+      return "Cancel";
     default:
-      return 'Pending'
+      return "Pending";
   }
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
   const session = await cookieSessionStorage.getSession(
-    request.headers.get('Cookie')
-  )
-  const customerId = (session.get('customerId') as string | undefined) ?? null
-  const isAdmin = Boolean((session.get('isAdmin') as string | undefined) ?? null)
+    request.headers.get("Cookie")
+  );
+  const customerId = (session.get("customerId") as string | undefined) ?? null;
+  const isAdmin = Boolean(
+    (session.get("isAdmin") as string | undefined) ?? null
+  );
 
   if (!customerId) {
-    return redirect('/login', {
+    return redirect("/login", {
       headers: {
-        'Set-Cookie': await cookieSessionStorage.destroySession(session),
+        "Set-Cookie": await cookieSessionStorage.destroySession(session),
       },
-    })
+    });
   }
 
-  const customer = findCustomerById(Number(customerId))
+  const customer = findCustomerById(Number(customerId));
   if (!customer) {
-    return redirect('/login', {
+    return redirect("/login", {
       headers: {
-        'Set-Cookie': await cookieSessionStorage.destroySession(session),
+        "Set-Cookie": await cookieSessionStorage.destroySession(session),
       },
-    })
+    });
   }
 
   // Load matches from DB with a simple, readable tickets_sold calculation.
@@ -128,25 +130,31 @@ export async function loader({ request }: Route.LoaderArgs) {
         FROM match m
         ORDER BY m.match_date ASC`
     )
-    .all() as UIMatch[]
+    .all() as UIMatch[];
 
   // Load current user's bookings from DB
   const dbBookings = db
     .prepare(
-      `SELECT booking_id, customer_id, match_id, quantity, seat_type, booking_date, status 
-         FROM booking 
+      `SELECT booking_id,
+              customer_id,
+              match_id,
+              quantity,
+              seat_type,
+              booking_date,
+              status
+         FROM booking
         WHERE customer_id = ?
         ORDER BY booking_date DESC`
     )
     .all(Number(customerId)) as Array<{
-    booking_id: number
-    customer_id: number
-    match_id: number
-    quantity: number
-    seat_type: 'STANDARD' | 'VIP'
-    booking_date: string
-    status: string
-  }>
+    booking_id: number;
+    customer_id: number;
+    match_id: number;
+    quantity: number;
+    seat_type: "STANDARD" | "VIP";
+    booking_date: string;
+    status: string;
+  }>;
 
   const bookings: UIBooking[] = dbBookings.map((b) => ({
     booking_id: b.booking_id,
@@ -156,7 +164,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     seat_type: b.seat_type,
     booking_date: b.booking_date,
     status: dbStatusToUI(b.status),
-  }))
+  }));
 
   // Load current user's tickets (join tickets -> bookings for ownership)
   const tickets = db
@@ -174,7 +182,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       WHERE b.customer_id = ?
       ORDER BY t.created_at DESC, t.ticket_id DESC`
     )
-    .all(Number(customerId)) as UITicket[]
+    .all(Number(customerId)) as UITicket[];
 
   // Load payments for user's bookings and map by booking_id (latest first)
   const paymentRows = db
@@ -192,12 +200,12 @@ export async function loader({ request }: Route.LoaderArgs) {
       WHERE b.customer_id = ?
       ORDER BY p.payment_date DESC, p.payment_id DESC`
     )
-    .all(Number(customerId)) as UIPayment[]
+    .all(Number(customerId)) as UIPayment[];
 
-  const paymentsByBookingId: Record<number, UIPayment> = {}
+  const paymentsByBookingId: Record<number, UIPayment> = {};
   for (const row of paymentRows) {
     if (!paymentsByBookingId[row.booking_id]) {
-      paymentsByBookingId[row.booking_id] = row
+      paymentsByBookingId[row.booking_id] = row;
     }
   }
 
@@ -209,56 +217,56 @@ export async function loader({ request }: Route.LoaderArgs) {
     bookings,
     tickets,
     paymentsByBookingId,
-  } as const)
+  } as const);
 }
 
 export async function action({ request }: Route.ActionArgs) {
   const session = await cookieSessionStorage.getSession(
-    request.headers.get('Cookie')
-  )
-  const customerId = session.get('customerId') as string | undefined
-  const formData = await request.formData()
-  const intent = formData.get('_action')
+    request.headers.get("Cookie")
+  );
+  const customerId = session.get("customerId") as string | undefined;
+  const formData = await request.formData();
+  const intent = formData.get("_action");
 
-  if (intent === 'sign-out') {
-    return redirect('/login', {
+  if (intent === "sign-out") {
+    return redirect("/login", {
       headers: {
-        'Set-Cookie': await cookieSessionStorage.destroySession(session),
+        "Set-Cookie": await cookieSessionStorage.destroySession(session),
       },
-    })
+    });
   }
 
-  if (intent === 'create-booking') {
+  if (intent === "create-booking") {
     if (!customerId) {
       return data(
         {
-          formError: 'Please sign in first. No customerId found in session.',
+          formError: "Please sign in first. No customerId found in session.",
         },
         { status: 400 }
-      )
+      );
     }
 
-    const matchId = Number(formData.get('match_id'))
-    const quantity = Number(formData.get('quantity'))
-    const seatTypeRaw = String(formData.get('seat_type') ?? 'STANDARD')
-    const seatType = seatTypeRaw === 'VIP' ? 'VIP' : 'STANDARD'
+    const matchId = Number(formData.get("match_id"));
+    const quantity = Number(formData.get("quantity"));
+    const seatTypeRaw = String(formData.get("seat_type") ?? "STANDARD");
+    const seatType = seatTypeRaw === "VIP" ? "VIP" : "STANDARD";
 
     if (!Number.isFinite(matchId)) {
-      return data({ formError: 'Invalid match.' }, { status: 400 })
+      return data({ formError: "Invalid match." }, { status: 400 });
     }
     if (!Number.isFinite(quantity) || quantity < 1 || quantity > 10) {
       return data(
-        { formError: 'Quantity must be between 1 and 10.' },
+        { formError: "Quantity must be between 1 and 10." },
         { status: 400 }
-      )
+      );
     }
 
     // Ensure match exists and compute remaining from DB
     const matchRow = db
       .prepare(`SELECT match_id, tickets_total FROM match WHERE match_id = ?`)
-      .get(matchId) as { match_id: number; tickets_total: number } | undefined
+      .get(matchId) as { match_id: number; tickets_total: number } | undefined;
     if (!matchRow)
-      return data({ formError: 'Match not found.' }, { status: 404 })
+      return data({ formError: "Match not found." }, { status: 404 });
 
     const soldRow = db
       .prepare(
@@ -266,146 +274,180 @@ export async function action({ request }: Route.ActionArgs) {
            FROM booking
           WHERE match_id = ? AND status IN ('PENDING', 'CONFIRMED')`
       )
-      .get(matchId) as { sold: number }
+      .get(matchId) as { sold: number };
 
-    const remaining = matchRow.tickets_total - (soldRow?.sold ?? 0)
+    const remaining = matchRow.tickets_total - (soldRow?.sold ?? 0);
     if (quantity > remaining) {
       return data(
         { formError: `Only ${remaining} tickets remaining for this match.` },
         { status: 400 }
-      )
+      );
     }
 
     // Insert booking as PENDING in DB
     db.prepare(
-      `INSERT INTO booking (customer_id, match_id, quantity, seat_type, status) VALUES (?, ?, ?, ?, 'PENDING')`
-    ).run(Number(customerId), matchId, quantity, seatType)
+      `
+      INSERT INTO booking
+             (customer_id, match_id, quantity, seat_type, status)
+      VALUES (?, ?, ?, ?, 'PENDING')
+      `
+    ).run(Number(customerId), matchId, quantity, seatType);
 
-    return redirect('/dashboard', {
+    return redirect("/dashboard", {
       headers: {
-        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+        "Set-Cookie": await cookieSessionStorage.commitSession(session),
       },
-    })
+    });
   }
 
-  if (intent === 'cancel-booking') {
-    const id = Number(formData.get('booking_id'))
+  if (intent === "cancel-booking") {
+    const id = Number(formData.get("booking_id"));
     const res = db
       .prepare(
-        `UPDATE booking SET status = 'CANCELLED' WHERE booking_id = ? AND customer_id = ?`
+        `UPDATE booking
+        SET status = 'CANCELLED'
+        WHERE booking_id = ? AND customer_id = ?`
       )
-      .run(id, Number(customerId))
+      .run(id, Number(customerId));
     if (!res.changes) {
-      return data({ formError: 'Booking not found.' }, { status: 404 })
+      return data({ formError: "Booking not found." }, { status: 404 });
     }
 
-    return redirect('/dashboard', {
+    return redirect("/dashboard", {
       headers: {
-        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+        "Set-Cookie": await cookieSessionStorage.commitSession(session),
       },
-    })
+    });
   }
 
-  if (intent === 'confirm-booking') {
-    const id = Number(formData.get('booking_id'))
-    const customerIdNum = Number(customerId)
-    const methodRaw = String(formData.get('payment_method') ?? 'CARD')
-    const method = methodRaw === 'THAI_QR' ? 'THAI_QR' : 'CARD'
+  if (intent === "confirm-booking") {
+    const id = Number(formData.get("booking_id"));
+    const customerIdNum = Number(customerId);
+    const methodRaw = String(formData.get("payment_method") ?? "CARD");
+    const method = methodRaw === "THAI_QR" ? "THAI_QR" : "CARD";
 
     try {
       const confirmAndCreatePayment = db.transaction(() => {
         const res = db
           .prepare(
-            `UPDATE booking SET status = 'CONFIRMED' WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
+            `UPDATE booking
+            SET status = 'CONFIRMED'
+            WHERE booking_id = ? AND customer_id = ? AND status = 'PENDING'`
           )
-          .run(id, customerIdNum)
+          .run(id, customerIdNum);
         if (!res.changes) {
-          throw new Error('NOT_FOUND_OR_PROCESSED')
+          throw new Error("NOT_FOUND_OR_PROCESSED");
         }
 
         const bookingRow = db
           .prepare(
-            `SELECT quantity, match_id, seat_type FROM booking WHERE booking_id = ? AND customer_id = ?`
+            `SELECT quantity, match_id, seat_type
+            FROM booking
+            WHERE booking_id = ? AND customer_id = ?`
           )
-          .get(id, customerIdNum) as { quantity: number; match_id: number; seat_type: 'STANDARD' | 'VIP' } | undefined
+          .get(id, customerIdNum) as
+          | {
+              quantity: number;
+              match_id: number;
+              seat_type: "STANDARD" | "VIP";
+            }
+          | undefined;
 
-        const qty = bookingRow?.quantity ?? 0
+        const qty = bookingRow?.quantity ?? 0;
         if (qty <= 0) {
-          throw new Error('INVALID_QUANTITY')
+          throw new Error("INVALID_QUANTITY");
         }
 
         const priceRow = db
-          .prepare(`SELECT price_standard_cents, price_vip_cents FROM match WHERE match_id = ?`)
-          .get(bookingRow!.match_id) as { price_standard_cents: number; price_vip_cents: number } | undefined
-        const unitPrice = bookingRow?.seat_type === 'VIP'
-          ? (priceRow?.price_vip_cents ?? 0)
-          : (priceRow?.price_standard_cents ?? 0)
+          .prepare(
+            `SELECT price_standard_cents, price_vip_cents
+            FROM match
+            WHERE match_id = ?`
+          )
+          .get(bookingRow!.match_id) as
+          | { price_standard_cents: number; price_vip_cents: number }
+          | undefined;
+        const unitPrice =
+          bookingRow?.seat_type === "VIP"
+            ? (priceRow?.price_vip_cents ?? 0)
+            : (priceRow?.price_standard_cents ?? 0);
 
-        const amountCents = qty * unitPrice
+        const amountCents = qty * unitPrice;
 
         db.prepare(
-          `INSERT INTO payment (booking_id, amount_cents, currency, payment_method, status) VALUES (?, ?, 'USD', ?, 'COMPLETED')`
-        ).run(id, amountCents, method)
+          `INSERT INTO payment
+          (booking_id, amount_cents, currency, payment_method, status)
+          VALUES (?, ?, 'USD', ?, 'COMPLETED')`
+        ).run(id, amountCents, method);
 
         // Create ticket records for this booking
-        const insertTicket = db.prepare<
-          [number, string, string, number]
-        >(
-          `INSERT INTO ticket (booking_id, seat_number, seat_type, price_cents) VALUES (?, ?, ?, ?)`
-        )
+        const insertTicket = db.prepare<[number, string, string, number]>(
+          `INSERT INTO ticket
+          (booking_id, seat_number, seat_type, price_cents)
+          VALUES (?, ?, ?, ?)`
+        );
         for (let i = 0; i < qty; i++) {
-          const seat = `B${id}-S${String(i + 1).padStart(2, '0')}`
-          insertTicket.run(id, seat, bookingRow!.seat_type, unitPrice)
+          const seat = `B${id}-S${String(i + 1).padStart(2, "0")}`;
+          insertTicket.run(id, seat, bookingRow!.seat_type, unitPrice);
         }
-      })
+      });
 
-      confirmAndCreatePayment()
+      confirmAndCreatePayment();
 
-      return redirect('/dashboard', {
+      return redirect("/dashboard", {
         headers: {
-          'Set-Cookie': await cookieSessionStorage.commitSession(session),
+          "Set-Cookie": await cookieSessionStorage.commitSession(session),
         },
-      })
+      });
     } catch (err: unknown) {
       const message =
-        err instanceof Error && err.message === 'NOT_FOUND_OR_PROCESSED'
-          ? 'Booking not found or already processed.'
-          : 'Unable to confirm booking and create payment.'
-      return data({ formError: message }, { status: 400 })
+        err instanceof Error && err.message === "NOT_FOUND_OR_PROCESSED"
+          ? "Booking not found or already processed."
+          : "Unable to confirm booking and create payment.";
+      return data({ formError: message }, { status: 400 });
     }
   }
 
-  if (intent === 'delete-booking') {
-    const id = Number(formData.get('booking_id'))
+  if (intent === "delete-booking") {
+    const id = Number(formData.get("booking_id"));
     const res = db
       .prepare(
-        `DELETE FROM booking WHERE booking_id = ? AND customer_id = ? AND status != 'CONFIRMED'`
+        `DELETE FROM booking
+        WHERE booking_id = ? AND customer_id = ? AND status != 'CONFIRMED'`
       )
-      .run(id, Number(customerId))
+      .run(id, Number(customerId));
     if (!res.changes) {
       return data(
-        { formError: 'Booking not found or cannot be deleted (already paid).' },
+        { formError: "Booking not found or cannot be deleted (already paid)." },
         { status: 404 }
-      )
+      );
     }
 
-    return redirect('/dashboard', {
+    return redirect("/dashboard", {
       headers: {
-        'Set-Cookie': await cookieSessionStorage.commitSession(session),
+        "Set-Cookie": await cookieSessionStorage.commitSession(session),
       },
-    })
+    });
   }
 
-  return data({ formError: 'Unsupported action.' }, { status: 400 })
+  return data({ formError: "Unsupported action." }, { status: 400 });
 }
 
 export default function Dashboard({
   loaderData,
   actionData,
 }: Route.ComponentProps) {
-  const { customerName, customerId, matches, bookings, tickets, paymentsByBookingId, isAdmin } = loaderData
-  const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null)
-  const [payBookingId, setPayBookingId] = useState<number | null>(null)
+  const {
+    customerName,
+    customerId,
+    matches,
+    bookings,
+    tickets,
+    paymentsByBookingId,
+    isAdmin,
+  } = loaderData;
+  const [deleteBookingId, setDeleteBookingId] = useState<number | null>(null);
+  const [payBookingId, setPayBookingId] = useState<number | null>(null);
 
   return (
     <div className="min-h-screen pb-16">
@@ -459,7 +501,7 @@ export default function Dashboard({
 
         {actionData?.formError ? (
           <div className="rounded-xl border border-red-300/60 dark:border-red-500/40 bg-red-50 dark:bg-red-950/40 p-4 text-red-700 dark:text-red-200">
-            <strong className="font-medium">Error:</strong>{' '}
+            <strong className="font-medium">Error:</strong>{" "}
             {actionData.formError}
           </div>
         ) : null}
@@ -496,18 +538,18 @@ export default function Dashboard({
                         Select a match
                       </option>
                       {matches.map((m) => {
-                        const remaining = m.tickets_total - m.tickets_sold
-                        const d = new Date(m.match_date)
-                        const label = `${m.home_team} vs ${m.away_team} — ${d.toLocaleString()} @ ${m.stadium} • Std ${formatCentsUSD(m.price_standard_cents)} • VIP ${formatCentsUSD(m.price_vip_cents)}`
+                        const remaining = m.tickets_total - m.tickets_sold;
+                        const d = new Date(m.match_date);
+                        const label = `${m.home_team} vs ${m.away_team} — ${d.toLocaleString()} @ ${m.stadium} • Std ${formatCentsUSD(m.price_standard_cents)} • VIP ${formatCentsUSD(m.price_vip_cents)}`;
                         return (
                           <option
                             key={m.match_id}
                             value={m.match_id}
                             disabled={remaining <= 0}
                           >
-                            {label} {remaining <= 0 ? ' (Sold out)' : ''}
+                            {label} {remaining <= 0 ? " (Sold out)" : ""}
                           </option>
-                        )
+                        );
                       })}
                     </select>
                   </div>
@@ -575,11 +617,11 @@ export default function Dashboard({
                   const remaining = Math.max(
                     0,
                     m.tickets_total - m.tickets_sold
-                  )
+                  );
                   const pct = Math.max(
                     0,
                     Math.min(100, (remaining / m.tickets_total) * 100)
-                  )
+                  );
                   return (
                     <div key={m.match_id} className="space-y-1.5">
                       <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] items-start gap-x-3 gap-y-1 text-sm">
@@ -597,7 +639,7 @@ export default function Dashboard({
                         />
                       </div>
                     </div>
-                  )
+                  );
                 })}
               </div>
             </div>
@@ -616,15 +658,23 @@ export default function Dashboard({
               {bookings
                 .filter((b) => !customerId || b.customer_id === customerId)
                 .map((b) => {
-                  const m = matches.find((mm) => mm.match_id === b.match_id)
-                  const when = m ? new Date(m.match_date).toLocaleString() : '—'
-                  const isPending = b.status === 'Pending'
-                  const isCancelled = b.status === 'Cancel'
-                  const ticketCount = tickets.filter((t) => t.booking_id === b.booking_id).length
-                  const pay = paymentsByBookingId[b.booking_id]
-                  const mtd = pay?.payment_method
-                  const unit = m ? (b.seat_type === 'VIP' ? m.price_vip_cents : m.price_standard_cents) : 0
-                  const totalCents = b.quantity * unit
+                  const m = matches.find((mm) => mm.match_id === b.match_id);
+                  const when = m
+                    ? new Date(m.match_date).toLocaleString()
+                    : "—";
+                  const isPending = b.status === "Pending";
+                  const isCancelled = b.status === "Cancel";
+                  const ticketCount = tickets.filter(
+                    (t) => t.booking_id === b.booking_id
+                  ).length;
+                  const pay = paymentsByBookingId[b.booking_id];
+                  const mtd = pay?.payment_method;
+                  const unit = m
+                    ? b.seat_type === "VIP"
+                      ? m.price_vip_cents
+                      : m.price_standard_cents
+                    : 0;
+                  const totalCents = b.quantity * unit;
                   return (
                     <div
                       key={b.booking_id}
@@ -641,18 +691,18 @@ export default function Dashboard({
                                 {m.home_team} vs {m.away_team}
                               </>
                             ) : (
-                              'Match removed'
+                              "Match removed"
                             )}
                           </div>
                         </div>
                         <span
                           className={
-                            'inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ' +
+                            "inline-flex items-center rounded-full px-2 py-1 text-xs font-medium " +
                             (isPending
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200'
-                              : b.status === 'Paid'
-                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                                : 'bg-slate-200 text-slate-800 dark:bg-white/10 dark:text-white/80')
+                              ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                              : b.status === "Paid"
+                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200"
+                                : "bg-slate-200 text-slate-800 dark:bg-white/10 dark:text-white/80")
                           }
                         >
                           {b.status}
@@ -661,7 +711,10 @@ export default function Dashboard({
                       <div className="text-sm text-slate-700 dark:text-white/70">
                         <div>{when}</div>
                         <div className="mt-0.5">Qty: {b.quantity}</div>
-                        <div className="mt-0.5">Seat type: {b.seat_type === 'VIP' ? 'VIP' : 'Standard'}</div>
+                        <div className="mt-0.5">
+                          Seat type:{" "}
+                          {b.seat_type === "VIP" ? "VIP" : "Standard"}
+                        </div>
                         {m && (
                           <div className="mt-0.5 text-slate-600 dark:text-white/60">
                             @ {m.stadium}
@@ -672,7 +725,7 @@ export default function Dashboard({
                         </div>
                         {!isPending && !isCancelled ? (
                           <div className="mt-0.5 text-slate-600 dark:text-white/60">
-                            Paid with: {mtd ? prettyMethod(mtd) : '—'}
+                            Paid with: {mtd ? prettyMethod(mtd) : "—"}
                           </div>
                         ) : null}
                         {!isPending && !isCancelled && ticketCount > 0 ? (
@@ -691,8 +744,16 @@ export default function Dashboard({
                             Make purchase
                           </button>
                           <Form method="post" replace>
-                            <input type="hidden" name="_action" value="cancel-booking" />
-                            <input type="hidden" name="booking_id" value={b.booking_id} />
+                            <input
+                              type="hidden"
+                              name="_action"
+                              value="cancel-booking"
+                            />
+                            <input
+                              type="hidden"
+                              name="booking_id"
+                              value={b.booking_id}
+                            />
                             <button
                               type="submit"
                               className="inline-flex items-center gap-2 rounded-xl border border-slate-900/10 dark:border-white/15 bg-white text-slate-900 dark:bg-white/10 dark:text-white px-3 py-2 text-sm font-medium hover:bg-slate-50 dark:hover:bg-white/15"
@@ -728,8 +789,12 @@ export default function Dashboard({
                               {tickets
                                 .filter((t) => t.booking_id === b.booking_id)
                                 .map((t) => (
-                                  <li key={t.ticket_id} className="text-sm text-slate-700 dark:text-white/70">
-                                    Seat {t.seat_number} · {t.seat_type} · ${(t.price_cents / 100).toFixed(2)}
+                                  <li
+                                    key={t.ticket_id}
+                                    className="text-sm text-slate-700 dark:text-white/70"
+                                  >
+                                    Seat {t.seat_number} · {t.seat_type} · $
+                                    {(t.price_cents / 100).toFixed(2)}
                                   </li>
                                 ))}
                             </ul>
@@ -737,7 +802,7 @@ export default function Dashboard({
                         )
                       )}
                     </div>
-                  )
+                  );
                 })}
             </div>
           )}
@@ -747,30 +812,46 @@ export default function Dashboard({
         <section className="space-y-3">
           <h2 className="text-lg font-medium">Your Tickets</h2>
           {tickets.length === 0 ? (
-            <p className="text-slate-600 dark:text-white/60">No tickets issued yet.</p>
+            <p className="text-slate-600 dark:text-white/60">
+              No tickets issued yet.
+            </p>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {tickets.map((t) => {
-                const m = matches.find((mm) => mm.match_id === t.match_id)
-                const when = m ? new Date(m.match_date).toLocaleString() : '—'
+                const m = matches.find((mm) => mm.match_id === t.match_id);
+                const when = m ? new Date(m.match_date).toLocaleString() : "—";
                 return (
-                  <div key={t.ticket_id} className="rounded-2xl border border-slate-900/10 dark:border-white/10 bg-white/70 dark:bg-white/[0.02] shadow-sm backdrop-blur p-4 space-y-2">
-                    <div className="text-sm text-slate-600 dark:text-white/60">Ticket #{t.ticket_id}</div>
+                  <div
+                    key={t.ticket_id}
+                    className="rounded-2xl border border-slate-900/10 dark:border-white/10 bg-white/70 dark:bg-white/[0.02] shadow-sm backdrop-blur p-4 space-y-2"
+                  >
+                    <div className="text-sm text-slate-600 dark:text-white/60">
+                      Ticket #{t.ticket_id}
+                    </div>
                     <div className="font-medium">
                       {m ? (
                         <>
                           {m.home_team} vs {m.away_team}
                         </>
                       ) : (
-                        'Match removed'
+                        "Match removed"
                       )}
                     </div>
-                    <div className="text-sm text-slate-700 dark:text-white/70">{when}</div>
-                    <div className="text-sm text-slate-700 dark:text-white/70">Seat {t.seat_number} · {t.seat_type === 'VIP' ? 'VIP' : 'Standard'}</div>
-                    <div className="text-sm text-slate-600 dark:text-white/60">@ {m?.stadium ?? '—'}</div>
-                    <div className="text-sm text-slate-700 dark:text-white/70">Price ${(t.price_cents / 100).toFixed(2)}</div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">
+                      {when}
+                    </div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">
+                      Seat {t.seat_number} ·{" "}
+                      {t.seat_type === "VIP" ? "VIP" : "Standard"}
+                    </div>
+                    <div className="text-sm text-slate-600 dark:text-white/60">
+                      @ {m?.stadium ?? "—"}
+                    </div>
+                    <div className="text-sm text-slate-700 dark:text-white/70">
+                      Price ${(t.price_cents / 100).toFixed(2)}
+                    </div>
                   </div>
-                )
+                );
               })}
             </div>
           )}
@@ -802,9 +883,17 @@ export default function Dashboard({
             </p>
 
             <div className="mt-6 grid gap-3">
-              <Form method="post" replace onSubmit={() => setPayBookingId(null)}>
+              <Form
+                method="post"
+                replace
+                onSubmit={() => setPayBookingId(null)}
+              >
                 <input type="hidden" name="_action" value="confirm-booking" />
-                <input type="hidden" name="booking_id" value={payBookingId ?? ''} />
+                <input
+                  type="hidden"
+                  name="booking_id"
+                  value={payBookingId ?? ""}
+                />
                 <input type="hidden" name="payment_method" value="CARD" />
                 <button
                   type="submit"
@@ -814,9 +903,17 @@ export default function Dashboard({
                 </button>
               </Form>
 
-              <Form method="post" replace onSubmit={() => setPayBookingId(null)}>
+              <Form
+                method="post"
+                replace
+                onSubmit={() => setPayBookingId(null)}
+              >
                 <input type="hidden" name="_action" value="confirm-booking" />
-                <input type="hidden" name="booking_id" value={payBookingId ?? ''} />
+                <input
+                  type="hidden"
+                  name="booking_id"
+                  value={payBookingId ?? ""}
+                />
                 <input type="hidden" name="payment_method" value="THAI_QR" />
                 <button
                   type="submit"
@@ -861,7 +958,8 @@ export default function Dashboard({
               Delete booking?
             </h3>
             <p className="mt-2 text-sm text-slate-600 dark:text-white/70">
-              This action cannot be undone. The booking will be permanently removed.
+              This action cannot be undone. The booking will be permanently
+              removed.
             </p>
             <div className="mt-6 flex items-center justify-end gap-2">
               <button
@@ -871,9 +969,17 @@ export default function Dashboard({
               >
                 Cancel
               </button>
-              <Form method="post" replace onSubmit={() => setDeleteBookingId(null)}>
+              <Form
+                method="post"
+                replace
+                onSubmit={() => setDeleteBookingId(null)}
+              >
                 <input type="hidden" name="_action" value="delete-booking" />
-                <input type="hidden" name="booking_id" value={deleteBookingId ?? ''} />
+                <input
+                  type="hidden"
+                  name="booking_id"
+                  value={deleteBookingId ?? ""}
+                />
                 <button
                   type="submit"
                   autoFocus
@@ -887,6 +993,5 @@ export default function Dashboard({
         </div>
       )}
     </div>
-  )
+  );
 }
-
