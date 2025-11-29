@@ -19,6 +19,8 @@ npm install
 
 ### Development
 
+Create a new `.env` file using `.env.example` as your guide.
+
 Start the development server with HMR:
 
 ```bash
@@ -35,8 +37,8 @@ Built with ❤️ using React Router.
 
 - Book tickets in `Dashboard` by selecting a match and quantity.
 - Confirm payment via the "Make purchase" button. On confirmation:
-	- The booking is marked `CONFIRMED`.
-	- A `payment` record is created with `COMPLETED` status.
-	- Individual `tickets` are issued for the booking (one per quantity).
+  - The booking is marked `CONFIRMED`.
+  - A `payment` record is created with `COMPLETED` status.
+  - Individual `tickets` are issued for the booking (one per quantity).
 - Issued tickets appear under the booking and in the "Your Tickets" section,
-	showing seat number, type, price, and match info.
+  showing seat number, type, price, and match info.
